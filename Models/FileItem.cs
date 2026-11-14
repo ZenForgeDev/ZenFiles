@@ -30,6 +30,11 @@ public sealed class FileItem : INotifyPropertyChanged
     public long Size { get; set; }
     public DateTime Modified { get; set; }
 
+    /// <summary>Mappen elementet ligger i. Settes bare for søkeresultater, ellers tom.</summary>
+    public string Where { get; set; } = "";
+    public Visibility WhereVisibility => Where.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public string TipText => Where.Length > 0 ? FullPath : Name;
+
     string Ext => IsDirectory ? "" : Path.GetExtension(Name);
     public bool IsMedia => !IsDirectory && (Img.Contains(Ext) || Vid.Contains(Ext));
 

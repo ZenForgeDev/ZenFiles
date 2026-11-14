@@ -98,7 +98,8 @@
                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                  AddTabButtonClick="Tabs_AddClick" TabCloseRequested="Tabs_CloseRequested"
                  SelectionChanged="Tabs_SelectionChanged"
-                 CanReorderTabs="True" CanDragTabs="True">
+                 CanReorderTabs="True" CanDragTabs="True"
+                 TabDroppedOutside="Tabs_DroppedOutside">
             <TabView.TabStripFooter>
                 <Grid x:Name="DragArea" MinWidth="140" Background="Transparent"/>
             </TabView.TabStripFooter>

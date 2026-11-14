@@ -9,6 +9,9 @@ using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.FileProperties;
 using Windows.System;
+using Windows.UI.Core;
+using Microsoft.UI.Input;
+using System.Collections.Concurrent;
 using ZenFiles.Models;
 using ZenFiles.Services;
 
@@ -27,6 +30,14 @@ public sealed partial class ExplorerPane : UserControl
     string _sort = "name";
     bool _asc = true, _showHidden, _grid, _loaded;
     CancellationTokenSource? _thumbCts;
+
+    // Dypt søk (Enter i søkefeltet)
+    bool _searchMode, _searchRunning;
+    List<FileItem> _folderAll = new();
+    CancellationTokenSource? _searchCts;
+    readonly ConcurrentQueue<SearchHit> _hitQueue = new();
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _hitTimer;
+    string _searchInfo = "";
 
     /// <summary>Elementer som dras mellom ruter i samme app.</summary>
     static (ExplorerPane Pane, List<FileItem> Items)? _drag;
@@ -212,6 +223,7 @@ public sealed partial class ExplorerPane : UserControl
             var list = await Fs.ListAsync(path, _showHidden);
             if (push && _loaded) { _back.Push(CurrentPath); _fwd.Clear(); }
             _loaded = true;
+            if (_searchMode) { EndSearchState(); SearchBox.Text = ""; }
             CurrentPath = path;
             _all = list;
             Title = ComputeTitle();
@@ -394,10 +406,146 @@ public sealed partial class ExplorerPane : UserControl
 
     // ───────── Visning ─────────
 
-    void Search_TextChanged(object s, TextChangedEventArgs e) => Apply();
+    void Search_TextChanged(object s, TextChangedEventArgs e)
+    {
+        if (_searchMode)
+        {
+            // Tømt felt avslutter søket; ellers beholdes treffene til du trykker Enter på nytt
+            if (string.IsNullOrWhiteSpace(SearchBox.Text)) CloseSearch();
+            return;
+        }
+        Apply();
+    }
+
+    public void FocusSearch()
+    {
+        SearchBox.Focus(FocusState.Programmatic);
+        SearchBox.SelectAll();
+    }
+
+    void Search_KeyDown(object s, KeyRoutedEventArgs e)
+    {
+        if (e.Key == VirtualKey.Escape)
+        {
+            if (_searchMode || SearchBox.Text.Length > 0) { CloseSearch(); ActiveList.Focus(FocusState.Programmatic); }
+            e.Handled = true;
+        }
+        else if (e.Key == VirtualKey.Enter)
+        {
+            var ctrl = InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control).HasFlag(CoreVirtualKeyStates.Down);
+            _ = DeepSearchAsync(ctrl);
+            e.Handled = true;
+        }
+    }
+
+    void CloseSearch_Click(object s, RoutedEventArgs e) { CloseSearch(); ActiveList.Focus(FocusState.Programmatic); }
+
+    /// <summary>Avslutter søket, tømmer feltet og viser mappen igjen.</summary>
+    void CloseSearch()
+    {
+        var was = _searchMode;
+        EndSearchState();
+        if (was) _all = _folderAll;
+        if (SearchBox.Text.Length > 0) SearchBox.Text = "";   // utløser Apply via TextChanged
+        else Apply();
+    }
+
+    void EndSearchState()
+    {
+        _searchCts?.Cancel();
+        _searchCts = null;
+        _hitTimer?.Stop();
+        while (_hitQueue.TryDequeue(out _)) { }
+        _searchMode = false;
+        _searchRunning = false;
+        CloseSearchBtn.Visibility = Visibility.Collapsed;
+        SetBusy(null);
+    }
+
+    async Task DeepSearchAsync(bool allDrives)
+    {
+        var q = SearchBox.Text?.Trim() ?? "";
+        if (q.Length == 0) return;
+        if (Fs.IsRemote) { Status.Text = "Dypt søk gjelder bare lokale mapper"; return; }
+        if (CurrentPath.Length == 0) allDrives = true;   // «Denne PC-en» -> alle stasjoner
+
+        _searchCts?.Cancel();
+        while (_hitQueue.TryDequeue(out _)) { }
+        if (!_searchMode) { _folderAll = _all; _searchMode = true; }
+        var cts = _searchCts = new CancellationTokenSource();
+        _all = new List<FileItem>();
+        _items = new ObservableCollection<FileItem>();
+        DetailsList.ItemsSource = _items;
+        GridList.ItemsSource = _items;
+        CloseSearchBtn.Visibility = Visibility.Visible;
+        _searchRunning = true;
+        _searchInfo = "";
+        SetBusy(allDrives ? "Søker på alle stasjoner…" : "Søker i undermapper…");
+        UpdateStatus();
+
+        _hitTimer ??= DispatcherQueue.CreateTimer();
+        _hitTimer.Interval = TimeSpan.FromMilliseconds(150);
+        _hitTimer.Tick -= HitTimer_Tick;
+        _hitTimer.Tick += HitTimer_Tick;
+        _hitTimer.Start();
+
+        SearchOutcome? outcome = null;
+        try
+        {
+            outcome = await SearchService.RunAsync(allDrives ? null : CurrentPath, q, h => _hitQueue.Enqueue(h), cts.Token);
+        }
+        catch (OperationCanceledException) { return; }   // nytt søk eller avbrutt
+        catch (Exception ex) { if (cts == _searchCts) _searchInfo = "Feil: " + ex.Message; }
+        finally
+        {
+            if (cts == _searchCts)
+            {
+                _hitTimer?.Stop();
+                DrainHits();
+                _searchRunning = false;
+                SetBusy(null);
+            }
+        }
+        if (cts != _searchCts) return;
+        if (outcome != null)
+            _searchInfo = outcome.Source + (outcome.Limited ? $" · viser de første {SearchService.MaxHits}, snevre inn søket" : "");
+        Apply();   // endelig sortering
+    }
+
+    void HitTimer_Tick(Microsoft.UI.Dispatching.DispatcherQueueTimer t, object a)
+    {
+        DrainHits();
+        UpdateStatus();
+    }
+
+    void DrainHits()
+    {
+        int n = 0;
+        while (n < 500 && _hitQueue.TryDequeue(out var h))
+        {
+            n++;
+            var it = new FileItem
+            {
+                Name = h.Name, FullPath = h.Path, IsDirectory = h.IsDir, Size = h.Size,
+                Modified = h.Ticks > 0 ? new DateTime(h.Ticks) : default,
+                Where = Path.GetDirectoryName(h.Path) ?? ""
+            };
+            _all.Add(it);
+            _items.Add(it);
+        }
+    }
 
     void ListToggle_Click(object s, RoutedEventArgs e) => SetGridMode(false);
     void GridToggle_Click(object s, RoutedEventArgs e) => SetGridMode(true);
+
+    /// <summary>Sann = ikonvisning, usann = liste. Brukes også når økten gjenopprettes.</summary>
+    public bool GridMode
+    {
+        get => _grid;
+        set { if (value != _grid) SetGridMode(value); }
+    }
+
+    public event Action<ExplorerPane>? ViewChanged;
 
     void SetGridMode(bool grid)
     {
@@ -408,6 +556,7 @@ public sealed partial class ExplorerPane : UserControl
         DetailsList.Visibility = grid ? Visibility.Collapsed : Visibility.Visible;
         HeaderRow.Visibility = grid ? Visibility.Collapsed : Visibility.Visible;
         Apply();
+        ViewChanged?.Invoke(this);
     }
 
     async void HiddenToggle_Click(object s, RoutedEventArgs e)
@@ -426,7 +575,7 @@ public sealed partial class ExplorerPane : UserControl
     void Apply()
     {
         IEnumerable<FileItem> q = _all;
-        var f = SearchBox.Text?.Trim();
+        var f = _searchMode ? null : SearchBox.Text?.Trim();
         if (!string.IsNullOrEmpty(f))
             q = q.Where(i => i.Name.Contains(f, StringComparison.OrdinalIgnoreCase));
 
@@ -460,6 +609,13 @@ public sealed partial class ExplorerPane : UserControl
     void UpdateStatus()
     {
         var sel = SelectedItems;
+        if (_searchMode)
+        {
+            Status.Text = sel.Count == 1
+                ? sel[0].FullPath
+                : $"{_items.Count} treff" + (_searchRunning ? " …" : _searchInfo.Length > 0 ? " · " + _searchInfo : "");
+            return;
+        }
         var text = sel.Count == 0 ? $"{_items.Count} elementer" : $"{sel.Count} av {_items.Count} valgt";
         if (sel.Count > 0 && sel.All(i => !i.IsDirectory)) text += $" ({FileItem.Format(sel.Sum(i => i.Size))})";
 
@@ -575,6 +731,11 @@ public sealed partial class ExplorerPane : UserControl
         }
 
         if (sel.Count == 1) menu.Items.Add(Item("Åpne", Symbol.OpenFile, async () => await OpenAsync(sel[0])));
+        if (_searchMode && sel.Count == 1 && sel[0].Where.Length > 0)
+        {
+            var parent = sel[0].Where;
+            menu.Items.Add(Item("Åpne overordnet mappe", Symbol.OpenLocal, async () => await NavigateAsync(parent)));
+        }
         menu.Items.Add(Item("Kopier til andre rute (F5)", Symbol.Copy, () => TransferRequested?.Invoke(this, false), sel.Count > 0));
         menu.Items.Add(Item("Flytt til andre rute (F6)", Symbol.MoveToFolder, () => TransferRequested?.Invoke(this, true), sel.Count > 0));
         menu.Items.Add(new MenuFlyoutSeparator());

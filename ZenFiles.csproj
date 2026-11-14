@@ -28,6 +28,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.7.250310001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
     <PackageReference Include="SSH.NET" Version="2026.0.0" />
+    <!-- Brukes bare til å spørre Windows Search-indeksen (skrivebeskyttet, SELECT) -->
+    <PackageReference Include="System.Data.OleDb" Version="8.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
     <!-- Uoffisiell/alfa WinUI 3-terminal (Windows Terminal-motoren). Kun brukt i Views/TerminalTab.cs -->
     <PackageReference Include="EasyWindowsTerminalControl.WinUI" Version="1.0.20-beta.1" />

@@ -30,7 +30,7 @@
         </Style>
 
         <DataTemplate x:Key="DetailsTemplate" x:DataType="m:FileItem">
-            <Grid Height="30" ColumnSpacing="8">
+            <Grid MinHeight="30" ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="26"/>
                     <ColumnDefinition Width="*"/>
@@ -39,7 +39,12 @@
                     <ColumnDefinition Width="120"/>
                 </Grid.ColumnDefinitions>
                 <v:ItemIcon Item="{x:Bind}" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="1" Text="{x:Bind Name}" VerticalAlignment="Center" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                <StackPanel Grid.Column="1" VerticalAlignment="Center" Padding="0,2">
+                    <TextBlock Text="{x:Bind Name}" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                    <!-- Mappen treffet ligger i (bare i søkeresultater) -->
+                    <TextBlock Text="{x:Bind Where}" FontSize="11" Opacity="0.55" TextTrimming="CharacterEllipsis"
+                               Visibility="{x:Bind WhereVisibility}"/>
+                </StackPanel>
                 <TextBlock Grid.Column="2" Text="{x:Bind ModifiedText}" VerticalAlignment="Center" Opacity="0.65" FontSize="12"/>
                 <TextBlock Grid.Column="3" Text="{x:Bind SizeText}" VerticalAlignment="Center" Opacity="0.65" FontSize="12"/>
                 <TextBlock Grid.Column="4" Text="{x:Bind TypeText}" VerticalAlignment="Center" Opacity="0.65" FontSize="12"/>
@@ -47,7 +52,10 @@
         </DataTemplate>
 
         <DataTemplate x:Key="GridTemplate" x:DataType="m:FileItem">
-            <StackPanel Width="108" Padding="4,10,4,6" Spacing="6">
+            <!-- Fast høyde: GridView bruker størrelsen til første element som cellestørrelse, så en rute med kort navn først
+                 klippet bort andre linje på lange navn. Høyden rommer ikon pluss to tekstlinjer. -->
+            <StackPanel Width="108" Height="124" Padding="4,10,4,6" Spacing="6"
+                        ToolTipService.ToolTip="{x:Bind TipText}">
                 <v:ItemIcon Item="{x:Bind}" Width="64" Height="64" HorizontalAlignment="Center"/>
                 <TextBlock Text="{x:Bind Name}" TextAlignment="Center" TextWrapping="Wrap" MaxLines="2"
                            TextTrimming="CharacterEllipsis" FontSize="12"/>
@@ -134,7 +142,9 @@
             </StackPanel>
 
             <Grid Grid.Column="4" Width="210">
-                <TextBox x:Name="SearchBox" PlaceholderText="Søk" Padding="30,6,8,6" CornerRadius="8" TextChanged="Search_TextChanged"/>
+                <TextBox x:Name="SearchBox" PlaceholderText="Søk · Enter for dypt søk" Padding="30,6,8,6" CornerRadius="8"
+                         TextChanged="Search_TextChanged" KeyDown="Search_KeyDown"
+                         ToolTipService.ToolTip="Skriv for å filtrere denne mappen. Enter søker i alle undermapper, Ctrl+Enter på alle stasjoner. Esc avslutter."/>
                 <FontIcon Glyph="&#xE721;" FontSize="12" Margin="11,0,0,0" HorizontalAlignment="Left"
                           IsHitTestVisible="False" Opacity="0.55"/>
             </Grid>
@@ -204,7 +214,14 @@
 
         <!-- Status (midtstilt) -->
         <Grid Grid.Row="2" Padding="14,6,14,2">
-            <TextBlock x:Name="Status" FontSize="12" Opacity="0.6" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+            <Button x:Name="CloseSearchBtn" Visibility="Collapsed" HorizontalAlignment="Left" Padding="8,2" FontSize="12"
+                    Click="CloseSearch_Click" ToolTipService.ToolTip="Tilbake til mappen (Esc)">
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                    <FontIcon Glyph="&#xE711;" FontSize="10"/>
+                    <TextBlock Text="Lukk søk"/>
+                </StackPanel>
+            </Button>
+            <TextBlock x:Name="Status" FontSize="12" Opacity="0.6" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="90,0,0,0"/>
             <StackPanel x:Name="BusyPanel" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" Visibility="Collapsed">
                 <ProgressRing IsActive="True" Width="14" Height="14"/>
                 <TextBlock x:Name="BusyText" FontSize="12"/>

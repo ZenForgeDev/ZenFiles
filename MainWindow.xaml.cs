@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Windowing;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 using Windows.Storage;
@@ -29,7 +30,14 @@ public sealed partial class MainWindow : Window
         OffContent = "Av"
     };
 
-    public MainWindow(string? startPath = null)
+    RectInt32 _geo;          // siste kjente plassering og størrelse (når vinduet ikke er maksimert)
+    bool _maximized;
+    MainWindow? _tearOutWindow;
+
+    /// <param name="startPath">Mappen første fane åpner i.</param>
+    /// <param name="session">Gjenopprett faner og plassering fra en lagret økt.</param>
+    /// <param name="empty">Tomt vindu som skal motta en fane som flyttes hit.</param>
+    public MainWindow(string? startPath = null, SessionWindow? session = null, bool empty = false)
     {
         InitializeComponent();
         Title = "ZenFiles";
@@ -50,7 +58,13 @@ public sealed partial class MainWindow : Window
         AddAccel(VirtualKey.W, VirtualKeyModifiers.Control, CloseCurrentTab);
         AddAccel(VirtualKey.D, VirtualKeyModifiers.Control, ToggleDual);
         AddAccel(VirtualKey.L, VirtualKeyModifiers.Control, () => CurrentExplorer?.Active.FocusPathBox());
+        AddAccel(VirtualKey.F, VirtualKeyModifiers.Control, () => CurrentExplorer?.Active.FocusSearch());
         AddAccel(VirtualKey.T, VirtualKeyModifiers.Control | VirtualKeyModifiers.Shift, () => OpenTerminalTab(ShellCommands.LocalShell(), "Terminal"));
+        AddAccel(VirtualKey.N, VirtualKeyModifiers.Control, () =>
+        {
+            var a = CurrentExplorer?.Active;
+            App.OpenNewWindow(a != null && !a.Fs.IsRemote && a.CurrentPath.Length > 0 ? a.CurrentPath : Home);
+        });
 
         try
         {
@@ -68,9 +82,125 @@ public sealed partial class MainWindow : Window
             Text = "Mapper og Win+E åpnes i ZenFiles i stedet for Utforsker. Kan angres når som helst.",
             FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
         });
+
+        var sessionSwitch = new ToggleSwitch
+        {
+            Header = "Husk faner og vinduer",
+            OnContent = "På",
+            OffContent = "Av",
+            IsOn = AppSettings.RestoreSession,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        sessionSwitch.Toggled += (_, _) =>
+        {
+            AppSettings.RestoreSession = sessionSwitch.IsOn;
+            if (sessionSwitch.IsOn) App.SaveSessionNow(); else SessionStore.Clear();
+        };
+        panel.Children.Add(sessionSwitch);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Lagrer åpne vinduer, faner (lokale mapper), liste/ikonvisning og vindusplassering, og åpner dem igjen " +
+                   "neste gang du starter ZenFiles. SFTP- og terminalfaner gjenopprettes ikke.",
+            FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
+        });
         SettingsBtn.Flyout = new Flyout { Content = panel };
 
-        NewExplorerTab(string.IsNullOrEmpty(startPath) ? Home : startPath);
+        App.Windows.Add(this);
+        Closed += OnWindowClosed;
+        AppWindow.Changed += AppWindow_Changed;
+
+        if (empty) return;   // venter på en fane som flyttes hit
+        if (session != null) RestoreSession(session);
+        else NewExplorerTab(string.IsNullOrEmpty(startPath) ? Home : startPath);
+        App.RequestSessionSave();
+    }
+
+    // ───────── Vindu: plassering, lukking, økt ─────────
+
+    void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs a)
+    {
+        if (!a.DidPositionChange && !a.DidSizeChange) return;
+        try
+        {
+            if (sender.Presenter is OverlappedPresenter p)
+            {
+                _maximized = p.State == OverlappedPresenterState.Maximized;
+                if (p.State == OverlappedPresenterState.Restored)
+                    _geo = new RectInt32(sender.Position.X, sender.Position.Y, sender.Size.Width, sender.Size.Height);
+            }
+        }
+        catch { }
+        App.RequestSessionSave();
+    }
+
+    void OnWindowClosed(object sender, WindowEventArgs args)
+    {
+        // Lukker du ikke det siste vinduet, lagres de andre uten dette. Det siste vinduet lagres med faner og alt.
+        bool last = App.Windows.Count <= 1;
+        if (!last) App.Windows.Remove(this);
+        App.SaveSessionNow();
+        App.Windows.Remove(this);
+
+        foreach (var t in Tabs.TabItems.OfType<TabViewItem>().ToList())
+        {
+            (t.Tag as Action)?.Invoke();
+            t.Tag = null;
+            (t.Content as IDisposable)?.Dispose();
+        }
+
+        // Et tomt vindu som aldri fikk noen fane (avbrutt løsriving) skal ikke holde programmet i live.
+        foreach (var w in App.Windows.Where(w => w.IsEmptyHost).ToList()) w.Close();
+    }
+
+    bool IsEmptyHost => Tabs.TabItems.Count == 0;
+
+    /// <summary>Øyeblikksbilde av dette vinduet til økt-filen. Bare lokale utforsker-faner tas med.</summary>
+    public SessionWindow Snapshot()
+    {
+        var sw = new SessionWindow { Maximized = _maximized };
+        if (_geo.Width > 0 && _geo.Height > 0) { sw.X = _geo.X; sw.Y = _geo.Y; sw.W = _geo.Width; sw.H = _geo.Height; }
+        foreach (var t in Tabs.TabItems.OfType<TabViewItem>())
+        {
+            if (t.Content is not ExplorerTab et || et.Left.Fs.IsRemote) continue;
+            if (ReferenceEquals(t, Tabs.SelectedItem)) sw.Selected = sw.Tabs.Count;
+            var tab = new SessionTab { Path = et.Left.CurrentPath, LeftGrid = et.Left.GridMode };
+            if (et.Right is { } r && !r.Fs.IsRemote)
+            {
+                tab.Dual = true;
+                tab.RightPath = r.CurrentPath;
+                tab.RightGrid = r.GridMode;
+            }
+            sw.Tabs.Add(tab);
+        }
+        return sw;
+    }
+
+    void RestoreSession(SessionWindow sw)
+    {
+        try
+        {
+            if (sw.W > 0 && sw.H > 0)
+            {
+                var r = new RectInt32(sw.X, sw.Y, sw.W, sw.H);
+                if (DisplayArea.GetFromRect(r, DisplayAreaFallback.None) != null) AppWindow.MoveAndResize(r);   // hopper over skjermer som ikke finnes lenger
+            }
+            if (sw.Maximized && AppWindow.Presenter is OverlappedPresenter p)
+                DispatcherQueue.TryEnqueue(() => { try { p.Maximize(); } catch { } });
+        }
+        catch { }
+
+        var tabs = new List<TabViewItem>();
+        foreach (var t in sw.Tabs)
+        {
+            if (t.Path.Length > 0 && !Directory.Exists(t.Path)) continue;   // mappen finnes ikke lenger
+            var et = NewExplorerTab(t.Path);
+            et.Left.GridMode = t.LeftGrid;
+            if (t.Dual && (t.RightPath.Length == 0 || Directory.Exists(t.RightPath)))
+                et.OpenDual(t.RightPath, t.RightGrid);
+            tabs.Add((TabViewItem)Tabs.SelectedItem);
+        }
+        if (tabs.Count == 0) { NewExplorerTab(Home); return; }
+        Tabs.SelectedItem = tabs[Math.Clamp(sw.Selected, 0, tabs.Count - 1)];
     }
 
     async void DefaultSwitch_Toggled(object s, RoutedEventArgs e)
@@ -314,19 +444,56 @@ public sealed partial class MainWindow : Window
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             VerticalContentAlignment = VerticalAlignment.Stretch
         };
+        PrepareTab(tab);
         Tabs.TabItems.Add(tab);
         Tabs.SelectedItem = tab;
+        App.RequestSessionSave();
         return tab;
     }
 
-    void NewExplorerTab(string path)
+    /// <summary>Høyreklikkmeny på fanen. Bygges på nytt når fanen flyttes til et annet vindu.</summary>
+    void PrepareTab(TabViewItem tab)
+    {
+        var menu = new MenuFlyout();
+        var move = new MenuFlyoutItem
+        {
+            Text = "Flytt til nytt vindu",
+            Icon = new FontIcon { Glyph = "\uE8A7" },
+            IsEnabled = tab.Content is not TerminalTab   // terminalen er knyttet til vinduet den ble åpnet i
+        };
+        move.Click += (_, _) => MoveTabToNewWindow(tab);
+        var close = new MenuFlyoutItem { Text = "Lukk fane", Icon = new FontIcon { Glyph = "\uE711" } };
+        close.Click += (_, _) => CloseTab(tab);
+        menu.Items.Add(move);
+        menu.Items.Add(close);
+        tab.ContextFlyout = menu;
+    }
+
+    /// <summary>Kobler utforsker-fanens hendelser til dette vinduet. Tag på fanen holder en funksjon som kobler dem fra igjen.</summary>
+    void HookExplorer(TabViewItem item, ExplorerTab et)
+    {
+        Action<IFileSystem, string> term = OnTerminalRequested;
+        Action<string> fav = AddFavorite;
+        Action<ExplorerPane> loc = p => OnLocationChanged(et, item, p);
+        et.TerminalRequested += term;
+        et.LocationChanged += loc;
+        bool local = !et.Left.Fs.IsRemote;
+        if (local) et.FavoriteRequested += fav;
+        item.Tag = (Action)(() =>
+        {
+            et.TerminalRequested -= term;
+            et.LocationChanged -= loc;
+            if (local) et.FavoriteRequested -= fav;
+        });
+    }
+
+    ExplorerTab NewExplorerTab(string path)
     {
         var et = new ExplorerTab(LocalFileSystem.Instance, path);
-        et.TerminalRequested += OnTerminalRequested;
-        et.FavoriteRequested += AddFavorite;
         var name = string.IsNullOrEmpty(path) ? "Denne PC-en" : System.IO.Path.GetFileName(path.TrimEnd('\\'));
         var item = AddTab(et, string.IsNullOrEmpty(name) ? path : name, "\uE8B7");
-        et.LocationChanged += p => OnLocationChanged(et, item, p);
+        HookExplorer(item, et);
+        return et;
     }
 
     async Task OpenSftpAsync(ConnectionProfile p)
@@ -343,9 +510,8 @@ public sealed partial class MainWindow : Window
             var fs = await SftpFileSystem.ConnectAsync(p, secret);
             ConnectionStore.Save(_profiles);   // lagrer vertsnøkkelen ved første tilkobling
             var et = new ExplorerTab(fs, fs.HomePath);
-            et.TerminalRequested += OnTerminalRequested;
             var item = AddTab(et, p.Name, "\uE774");
-            et.LocationChanged += pane => OnLocationChanged(et, item, pane);
+            HookExplorer(item, et);
         }
         catch (Exception ex)
         {
@@ -420,9 +586,14 @@ public sealed partial class MainWindow : Window
     {
         if (pane == et.Active && !string.IsNullOrEmpty(pane.Title)) item.Header = pane.Title;
         SyncSidebar();
+        App.RequestSessionSave();
     }
 
-    void Tabs_SelectionChanged(object s, SelectionChangedEventArgs e) => SyncSidebar();
+    void Tabs_SelectionChanged(object s, SelectionChangedEventArgs e)
+    {
+        SyncSidebar();
+        App.RequestSessionSave();
+    }
 
     /// <summary>Utheving i sidepanelet følger den aktive rutens mappe.</summary>
     void SyncSidebar()
@@ -582,9 +753,123 @@ public sealed partial class MainWindow : Window
 
     void CloseTab(TabViewItem tab)
     {
+        // Lukkes siste fane, tas økten med før fanen forsvinner, så den siste mappen huskes til neste gang.
+        if (Tabs.TabItems.Count == 1) App.SaveSessionNow();
+        (tab.Tag as Action)?.Invoke();
+        tab.Tag = null;
         Tabs.TabItems.Remove(tab);
         (tab.Content as IDisposable)?.Dispose();
         if (Tabs.TabItems.Count == 0) Close();
+        else App.RequestSessionSave();
+    }
+
+    // ───────── Flytte faner mellom vinduer ─────────
+
+    /// <summary>Tar fanen ut av dette vinduet uten å lukke den (innholdet beholdes).</summary>
+    void DetachTab(TabViewItem tab)
+    {
+        (tab.Tag as Action)?.Invoke();
+        tab.Tag = null;
+        Tabs.TabItems.Remove(tab);
+    }
+
+    /// <summary>Tar imot en fane fra et annet vindu.</summary>
+    void AdoptTab(TabViewItem tab, int index = -1)
+    {
+        if (tab.Content is ExplorerTab et) HookExplorer(tab, et);
+        PrepareTab(tab);
+        if (index < 0 || index > Tabs.TabItems.Count) index = Tabs.TabItems.Count;
+        Tabs.TabItems.Insert(index, tab);
+        Tabs.SelectedItem = tab;
+        SyncSidebar();
+        App.RequestSessionSave();
+    }
+
+    void MoveTabToNewWindow(TabViewItem tab)
+    {
+        if (tab.Content is TerminalTab) return;
+        var w = new MainWindow(empty: true);
+        try { w.AppWindow.Resize(AppWindow.Size); } catch { }
+        DetachTab(tab);
+        w.AdoptTab(tab);
+        w.Activate();
+        if (Tabs.TabItems.Count == 0) Close();
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool GetCursorPos(out Windows.Graphics.PointInt32 p);
+
+    /// <summary>Fane sluppet utenfor fanelinjen -> eget vindu der musepekeren er.
+    /// (WinUI sin innebygde uttrekking får hele skjermen til å blinke ved hvert klikk, så den er slått av.)</summary>
+    void Tabs_DroppedOutside(TabView sender, TabViewTabDroppedOutsideEventArgs e)
+    {
+        if (e.Tab is not TabViewItem tab || tab.Content is TerminalTab) return;
+        if (Tabs.TabItems.Count == 1) return;   // eneste fane: allerede eget vindu
+        GetCursorPos(out var cur);
+        // Utsett til dra-og-slipp er helt ferdig; å flytte fanen midt i draget er det som kan krasje
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+                if (!Tabs.TabItems.Contains(tab)) return;
+                var w = new MainWindow(empty: true);
+                try
+                {
+                    w.AppWindow.Resize(AppWindow.Size);
+                    w.AppWindow.Move(new Windows.Graphics.PointInt32(cur.X - 200, cur.Y - 20));
+                }
+                catch { }
+                DetachTab(tab);
+                w.AdoptTab(tab);
+                w.Activate();
+            }
+            catch (Exception ex) { _ = ex; }
+        });
+    }
+
+    void Tabs_TearOutWindowRequested(TabView sender, TabViewTabTearOutWindowRequestedEventArgs e)
+    {
+        // Et vindu fra en avbrutt løsriving som aldri fikk noen fane, ryddes bort nå.
+        if (_tearOutWindow is { IsEmptyHost: true } old) old.Close();
+        _tearOutWindow = null;
+
+        if (Tabs.SelectedItem is TabViewItem { Content: TerminalTab }) return;   // avbryter: terminalen kan ikke flyttes
+
+        var w = new MainWindow(empty: true);
+        try { w.AppWindow.Resize(AppWindow.Size); } catch { }
+        _tearOutWindow = w;
+        e.NewWindowId = w.AppWindow.Id;
+    }
+
+    void Tabs_TearOutRequested(TabView sender, TabViewTabTearOutRequestedEventArgs e)
+    {
+        var w = _tearOutWindow;
+        _tearOutWindow = null;
+        if (w == null) return;
+
+        foreach (var tab in e.Tabs.OfType<TabViewItem>().ToList())
+        {
+            if (tab.Content is TerminalTab) continue;
+            DetachTab(tab);
+            w.AdoptTab(tab);
+        }
+        w.Activate();
+        if (Tabs.TabItems.Count == 0) Close();
+    }
+
+    void Tabs_ExternalDropping(TabView sender, TabViewExternalTornOutTabsDroppingEventArgs e) => e.AllowDrop = true;
+
+    /// <summary>En fane som dras fra et annet vindu og slippes her.</summary>
+    void Tabs_ExternalDropped(TabView sender, TabViewExternalTornOutTabsDroppedEventArgs e)
+    {
+        foreach (var tab in e.Tabs.OfType<TabViewItem>().ToList())
+        {
+            if (tab.Content is TerminalTab) continue;
+            var src = App.Windows.FirstOrDefault(x => x.Tabs.TabItems.Contains(tab));
+            src?.DetachTab(tab);
+            AdoptTab(tab, e.DropIndex);
+            if (src != null && src != this && src.Tabs.TabItems.Count == 0) src.Close();
+        }
     }
 
     void AddAccel(VirtualKey key, VirtualKeyModifiers mod, Action act)

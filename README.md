@@ -11,7 +11,9 @@ Moderne filutforsker for Windows 11 (WinUI 3) med innebygd SFTP-utforsker og ter
   Vertsnøkkel huskes ved første tilkobling og tilkoblingen avvises hvis den senere endres.
 - Terminalfaner (PowerShell/pwsh) og SSH-terminal (bruker Windows' innebygde `ssh.exe`),
   «Åpne terminal her» fra hvilken som helst mappe, lokal eller på serveren
-- Snarveier: Ctrl+T ny fane, Ctrl+W lukk, Ctrl+D dobbel rute, Ctrl+L sti, Ctrl+Shift+T terminal
+- Flere vinduer: dra en fane ut for å lage nytt vindu (eller høyreklikk fanen → «Flytt til nytt vindu»), dra den tilbake for å slå sammen. Ctrl+N nytt vindu, og høyreklikk på oppgavelinjeikonet → «Nytt vindu». Starter du ZenFiles på nytt, åpnes et nytt vindu i den som allerede kjører
+Husk faner og vinduer (av som standard, slås på i innstillinger): åpne vinduer, lokale faner, liste/ikonvisning og vindusplassering gjenopprettes ved neste oppstart
+Snarveier: Ctrl+N nytt vindu, Ctrl+T ny fane, Ctrl+W lukk, Ctrl+D dobbel rute, Ctrl+L sti, Ctrl+Shift+T terminal
 
 ## Standard filbehandler
 Bryteren «Standard filbehandler» nederst i sidepanelet får mapper og Win+E til å åpne i ZenFiles
