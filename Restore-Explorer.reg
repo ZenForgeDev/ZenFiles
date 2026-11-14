@@ -1,0 +1,15 @@
+Windows Registry Editor Version 5.00
+
+; Nødfil: setter Windows Utforsker tilbake som standard (fjerner ZenFiles sine overstyringer for din bruker).
+; Brukes bare hvis bryteren i appen eller "ZenFiles.exe --restore-default" ikke fungerer.
+
+[-HKEY_CURRENT_USER\Software\Classes\Folder\shell\open]
+[-HKEY_CURRENT_USER\Software\Classes\Folder\shell\explore]
+[-HKEY_CURRENT_USER\Software\Classes\Folder\shell\opennewwindow]
+[-HKEY_CURRENT_USER\Software\Classes\Directory\shell\open]
+[-HKEY_CURRENT_USER\Software\Classes\Directory\shell\explore]
+[-HKEY_CURRENT_USER\Software\Classes\Directory\shell\opennewwindow]
+[-HKEY_CURRENT_USER\Software\Classes\Drive\shell\open]
+[-HKEY_CURRENT_USER\Software\Classes\Drive\shell\explore]
+[-HKEY_CURRENT_USER\Software\Classes\Drive\shell\opennewwindow]
+[-HKEY_CURRENT_USER\Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\opennewwindow]

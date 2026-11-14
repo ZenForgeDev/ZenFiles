@@ -1,0 +1,53 @@
+<UserControl
+    x:Class="ZenFiles.Views.ItemIcon"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Viewbox Stretch="Uniform">
+        <Grid Width="40" Height="40">
+
+            <!-- Blå mappe i macOS-stil -->
+            <Grid x:Name="FolderG" Visibility="Collapsed">
+                <Path Data="M3,9 Q3,6 6,6 L15,6 Q17,6 18.3,7.6 L20,10 L34,10 Q37,10 37,13 L37,31 Q37,34 34,34 L6,34 Q3,34 3,31 Z">
+                    <Path.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#FF2B86E8" Offset="0"/>
+                            <GradientStop Color="#FF1A63C8" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <Path Data="M3,15 Q3,12 6,12 L34,12 Q37,12 37,15 L37,31 Q37,34 34,34 L6,34 Q3,34 3,31 Z">
+                    <Path.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#FF74CCFF" Offset="0"/>
+                            <GradientStop Color="#FF35A0FF" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Path.Fill>
+                </Path>
+            </Grid>
+
+            <!-- Dokumentark med filendelse -->
+            <Grid x:Name="FileG" Visibility="Collapsed">
+                <Path Data="M9,4 L25,4 L33,12 L33,35 Q33,37 31,37 L9,37 Q7,37 7,35 L7,6 Q7,4 9,4 Z" Stroke="#33808080" StrokeThickness="0.8">
+                    <Path.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#FFFAFAFC" Offset="0"/>
+                            <GradientStop Color="#FFDDE0E6" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Path.Fill>
+                </Path>
+                <Path Data="M25,4 L25,10 Q25,12 27,12 L33,12 Z" Fill="#FFC2C7D0"/>
+                <TextBlock x:Name="ExtText" FontSize="8" FontWeight="Bold" HorizontalAlignment="Center"
+                           VerticalAlignment="Bottom" Margin="0,0,0,8" CharacterSpacing="30"/>
+            </Grid>
+
+            <FontIcon x:Name="DriveG" Glyph="&#xEDA2;" FontSize="30" Foreground="#FFB0B5BD" Visibility="Collapsed"/>
+
+            <!-- Miniatyr for bilder/video -->
+            <Border x:Name="ThumbB" Width="36" Height="36" CornerRadius="3" BorderThickness="1"
+                    BorderBrush="#40808080" Visibility="Collapsed">
+                <Image x:Name="Thumb" Stretch="UniformToFill"/>
+            </Border>
+        </Grid>
+    </Viewbox>
+</UserControl>

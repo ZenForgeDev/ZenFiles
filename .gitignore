@@ -1,0 +1,20 @@
+# Bygg-utdata
+bin/
+obj/
+publish/
+*.exe
+!Assets/**/*.exe
+
+# Installer-resultat (skriptet i Installer\ZenFiles.iss skal være med)
+ZFSetup*.exe
+
+# Visual Studio / editorer
+.vs/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# Pakker og logger
+*.nupkg
+*.log
