@@ -20,6 +20,9 @@ public sealed class SettingsData
 
     /// <summary>Spør GitHub om nyere versjon ved oppstart og hver 12. time.</summary>
     public bool UpdateCheck { get; set; } = true;
+
+    /// <summary>Mapper som er festet som faner. Åpnes igjen ved oppstart, uavhengig av «husk vinduer og faner».</summary>
+    public List<string> PinnedTabs { get; set; } = new();
 }
 
 /// <summary>Enkle innstillinger i %LOCALAPPDATA%\ZenFiles\settings.json.</summary>
@@ -62,6 +65,12 @@ public static class AppSettings
     {
         get => string.IsNullOrEmpty(Data.Theme) ? "standard" : Data.Theme;
         set { Data.Theme = value; Write(); }
+    }
+
+    public static List<string> PinnedTabs
+    {
+        get => Data.PinnedTabs ??= new();
+        set { Data.PinnedTabs = value; Write(); }
     }
 
     public static bool UpdateCheck

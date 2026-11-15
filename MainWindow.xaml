@@ -113,7 +113,7 @@
         </Grid>
 
         <!-- Faner -->
-        <TabView x:Name="Tabs" Grid.Column="1" Background="Transparent"
+        <TabView x:Name="Tabs" Grid.Column="1" Background="Transparent" TabWidthMode="SizeToContent"
                  HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
                  AddTabButtonClick="Tabs_AddClick" TabCloseRequested="Tabs_CloseRequested"
                  SelectionChanged="Tabs_SelectionChanged"

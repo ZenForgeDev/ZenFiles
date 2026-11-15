@@ -295,8 +295,18 @@ public sealed partial class MainWindow : Window
         AppWindow.Closing += (_, _) => CaptureGeometry();
 
         if (empty) return;   // venter på en fane som flyttes hit
+        Tabs.TabDragCompleted += (_, _) => DispatcherQueue.TryEnqueue(NormalizePinnedOrder);
         if (session != null) RestoreSession(session);
-        else NewExplorerTab(string.IsNullOrEmpty(startPath) ? Home : startPath);
+        else
+        {
+            // Festede mapper åpnes bare i det første vinduet (ikke i vinduer som åpnes senere).
+            var pins = App.Windows.Count == 1 ? AppSettings.PinnedTabs.Where(Directory.Exists).ToList() : new List<string>();
+            foreach (var p in pins) NewExplorerTab(p, pinned: true, save: false);
+            if (pins.Count == 0 || !string.IsNullOrEmpty(startPath))
+                NewExplorerTab(string.IsNullOrEmpty(startPath) ? Home : startPath);
+            else if (Tabs.TabItems.Count > 0)
+                Tabs.SelectedItem = Tabs.TabItems[0];
+        }
         App.RequestSessionSave();
     }
 
@@ -387,6 +397,7 @@ public sealed partial class MainWindow : Window
         {
             (t.Tag as Action)?.Invoke();
             t.Tag = null;
+            _pinned.Remove(t);
             (t.Content as IDisposable)?.Dispose();
         }
 
@@ -406,7 +417,7 @@ public sealed partial class MainWindow : Window
         {
             if (t.Content is not ExplorerTab et || et.Left.Fs.IsRemote) continue;
             if (ReferenceEquals(t, Tabs.SelectedItem)) sw.Selected = sw.Tabs.Count;
-            var tab = new SessionTab { Path = et.Left.CurrentPath, LeftGrid = et.Left.GridMode };
+            var tab = new SessionTab { Path = et.Left.CurrentPath, LeftGrid = et.Left.GridMode, Pinned = IsPinned(t) };
             if (et.Right is { } r && !r.Fs.IsRemote)
             {
                 tab.Dual = true;
@@ -438,7 +449,7 @@ public sealed partial class MainWindow : Window
         foreach (var t in sw.Tabs)
         {
             if (t.Path.Length > 0 && !Directory.Exists(t.Path)) continue;   // mappen finnes ikke lenger
-            var et = NewExplorerTab(t.Path);
+            var et = NewExplorerTab(t.Path, t.Pinned, save: false);
             et.Left.GridMode = t.LeftGrid;
             if (t.Dual && (t.RightPath.Length == 0 || Directory.Exists(t.RightPath)))
                 et.OpenDual(t.RightPath, t.RightGrid);
@@ -744,10 +755,98 @@ public sealed partial class MainWindow : Window
             VerticalContentAlignment = VerticalAlignment.Stretch
         };
         PrepareTab(tab);
+        ApplyTabLook(tab);
         Tabs.TabItems.Add(tab);
         Tabs.SelectedItem = tab;
         App.RequestSessionSave();
         return tab;
+    }
+
+    // ───────── Festede faner ─────────
+
+    /// <summary>Festede faner er lagret her mens appen kjører (statisk så de beholder festet når de flyttes mellom vinduer).</summary>
+    static readonly HashSet<TabViewItem> _pinned = new();
+
+    static bool IsPinned(TabViewItem t) => _pinned.Contains(t);
+
+    static string TitleOf(TabViewItem t) =>
+        t.Content is ExplorerTab et && !string.IsNullOrEmpty(et.Active.Title) ? et.Active.Title
+        : t.Header as string is { Length: > 0 } h ? h : "Fane";
+
+    /// <summary>Festede faner vises smale med bare ikon (navnet står i verktøytipset); vanlige faner får navn og lukkeknapp.</summary>
+    static void ApplyTabLook(TabViewItem t)
+    {
+        if (IsPinned(t))
+        {
+            var title = TitleOf(t);
+            t.Header = "";
+            ToolTipService.SetToolTip(t, title);
+            t.IsClosable = false;
+            t.MinWidth = 0;
+            t.MaxWidth = 44;
+        }
+        else
+        {
+            if (t.Header is string { Length: 0 }) t.Header = TitleOf(t);
+            ToolTipService.SetToolTip(t, null);
+            t.IsClosable = true;
+            t.MinWidth = 120;
+            t.MaxWidth = 240;
+        }
+    }
+
+    void SetPinned(TabViewItem tab, bool pin, bool save = true)
+    {
+        if (pin) _pinned.Add(tab); else _pinned.Remove(tab);
+        ApplyTabLook(tab);
+        PrepareTab(tab);
+        MovePinBoundary(tab);
+        if (save) { SavePins(); App.RequestSessionSave(); }
+    }
+
+    /// <summary>Festet fane går sist i den festede gruppen til venstre; løsnet fane går rett etter gruppen.</summary>
+    void MovePinBoundary(TabViewItem tab)
+    {
+        int cur = Tabs.TabItems.IndexOf(tab);
+        if (cur < 0) return;
+        int target = Tabs.TabItems.OfType<TabViewItem>().Count(t => t != tab && IsPinned(t));
+        if (cur == target) return;
+        var sel = Tabs.SelectedItem;
+        Tabs.TabItems.RemoveAt(cur);
+        Tabs.TabItems.Insert(Math.Min(target, Tabs.TabItems.Count), tab);
+        Tabs.SelectedItem = sel ?? tab;
+    }
+
+    /// <summary>Etter at brukeren har dratt faner: festede skal alltid ligge først.</summary>
+    void NormalizePinnedOrder()
+    {
+        var all = Tabs.TabItems.OfType<TabViewItem>().ToList();
+        var want = all.Where(IsPinned).Concat(all.Where(t => !IsPinned(t))).ToList();
+        if (all.SequenceEqual(want)) return;
+        var sel = Tabs.SelectedItem;
+        for (int i = 0; i < want.Count; i++)
+        {
+            if (!ReferenceEquals(Tabs.TabItems[i], want[i]))
+            {
+                Tabs.TabItems.Remove(want[i]);
+                Tabs.TabItems.Insert(i, want[i]);
+            }
+        }
+        if (sel != null) Tabs.SelectedItem = sel;
+    }
+
+    /// <summary>Lagrer hvilke mapper som er festet (i alle vinduer) i innstillingene.</summary>
+    static void SavePins()
+    {
+        var list = App.Windows
+            .SelectMany(w => w.Tabs.TabItems.OfType<TabViewItem>())
+            .Where(IsPinned)
+            .Select(t => t.Content as ExplorerTab)
+            .Where(et => et != null && !et.Left.Fs.IsRemote && et.Left.CurrentPath.Length > 0)
+            .Select(et => et!.Left.CurrentPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        AppSettings.PinnedTabs = list;
     }
 
     /// <summary>Høyreklikkmeny på fanen. Bygges på nytt når fanen flyttes til et annet vindu.</summary>
@@ -761,8 +860,15 @@ public sealed partial class MainWindow : Window
             IsEnabled = tab.Content is not TerminalTab   // terminalen er knyttet til vinduet den ble åpnet i
         };
         move.Click += (_, _) => MoveTabToNewWindow(tab);
-        var close = new MenuFlyoutItem { Text = "Lukk fane", Icon = new FontIcon { Glyph = "\uE711" } };
+        var close = new MenuFlyoutItem { Text = "Lukk fane", Icon = new FontIcon { Glyph = "\uE711" }, IsEnabled = !IsPinned(tab) };
         close.Click += (_, _) => CloseTab(tab);
+        if (tab.Content is ExplorerTab pet && !pet.Left.Fs.IsRemote)
+        {
+            bool pinned = IsPinned(tab);
+            var pin = new MenuFlyoutItem { Text = pinned ? "Løsne fane" : "Fest fane", Icon = new FontIcon { Glyph = pinned ? "\uE77A" : "\uE718" } };
+            pin.Click += (_, _) => SetPinned(tab, !pinned);
+            menu.Items.Add(pin);
+        }
         menu.Items.Add(move);
         menu.Items.Add(close);
         tab.ContextFlyout = menu;
@@ -786,12 +892,13 @@ public sealed partial class MainWindow : Window
         });
     }
 
-    ExplorerTab NewExplorerTab(string path)
+    ExplorerTab NewExplorerTab(string path, bool pinned = false, bool save = true)
     {
         var et = new ExplorerTab(LocalFileSystem.Instance, path);
         var name = string.IsNullOrEmpty(path) ? "Denne PC-en" : System.IO.Path.GetFileName(path.TrimEnd('\\'));
         var item = AddTab(et, string.IsNullOrEmpty(name) ? path : name, "\uE8B7");
         HookExplorer(item, et);
+        if (pinned) SetPinned(item, true, save);
         return et;
     }
 
@@ -884,7 +991,12 @@ public sealed partial class MainWindow : Window
 
     void OnLocationChanged(ExplorerTab et, TabViewItem item, ExplorerPane pane)
     {
-        if (pane == et.Active && !string.IsNullOrEmpty(pane.Title)) item.Header = pane.Title;
+        if (pane == et.Active && !string.IsNullOrEmpty(pane.Title))
+        {
+            if (IsPinned(item)) ToolTipService.SetToolTip(item, pane.Title);
+            else item.Header = pane.Title;
+        }
+        if (IsPinned(item)) SavePins();
         SyncSidebar();
         App.RequestSessionSave();
     }
@@ -1048,7 +1160,7 @@ public sealed partial class MainWindow : Window
 
     void CloseCurrentTab()
     {
-        if (Tabs.SelectedItem is TabViewItem t) CloseTab(t);
+        if (Tabs.SelectedItem is TabViewItem t && !IsPinned(t)) CloseTab(t);   // festede faner må løsnes først
     }
 
     void CloseTab(TabViewItem tab)
@@ -1057,6 +1169,7 @@ public sealed partial class MainWindow : Window
         if (Tabs.TabItems.Count == 1) App.SaveSessionNow();
         (tab.Tag as Action)?.Invoke();
         tab.Tag = null;
+        _pinned.Remove(tab);
         Tabs.TabItems.Remove(tab);
         (tab.Content as IDisposable)?.Dispose();
         if (Tabs.TabItems.Count == 0) Close();
@@ -1080,6 +1193,7 @@ public sealed partial class MainWindow : Window
         PrepareTab(tab);
         if (index < 0 || index > Tabs.TabItems.Count) index = Tabs.TabItems.Count;
         Tabs.TabItems.Insert(index, tab);
+        NormalizePinnedOrder();
         Tabs.SelectedItem = tab;
         SyncSidebar();
         App.RequestSessionSave();

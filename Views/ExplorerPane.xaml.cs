@@ -74,7 +74,10 @@ public sealed partial class ExplorerPane : UserControl
         ListArea.PointerReleased += Area_PointerEnded;
         ListArea.PointerCaptureLost += Area_PointerEnded;
         Loaded += (_, _) => StartWatch();
-        Unloaded += (_, _) => StopWatch();
+        // ListView/GridView behandler mellomrom selv og markerer tasten som håndtert, så vanlig KeyDown ser den aldri.
+        DetailsList.AddHandler(KeyDownEvent, new KeyEventHandler(List_PreviewKey), true);
+        GridList.AddHandler(KeyDownEvent, new KeyEventHandler(List_PreviewKey), true);
+        Unloaded += (_, _) => { StopWatch(); DisposePreview(); };
         _ = NavigateAsync(startPath, push: false);
     }
 
@@ -220,6 +223,7 @@ public sealed partial class ExplorerPane : UserControl
     public async Task NavigateAsync(string path, bool push = true)
     {
         _thumbCts?.Cancel();
+        if (IsPreviewOpen) ClosePreview();
         SetBusy("Laster…");
         try
         {
@@ -688,7 +692,11 @@ public sealed partial class ExplorerPane : UserControl
     public List<FileItem> SelectedItems =>
         (_grid ? GridList.SelectedItems : DetailsList.SelectedItems).Cast<FileItem>().ToList();
 
-    void List_SelectionChanged(object s, SelectionChangedEventArgs e) => UpdateStatus();
+    void List_SelectionChanged(object s, SelectionChangedEventArgs e)
+    {
+        UpdateStatus();
+        if (IsPreviewOpen) RefreshPreview();
+    }
 
     async void List_DoubleTapped(object s, DoubleTappedRoutedEventArgs e)
     {
@@ -720,6 +728,16 @@ public sealed partial class ExplorerPane : UserControl
         }
         finally { SetBusy(null); }
     }
+
+    void List_PreviewKey(object s, KeyRoutedEventArgs e)
+    {
+        if (e.OriginalSource is TextBox) return;
+        if (e.Key == VirtualKey.Space && !CtrlDown() && SelectedItems.Count == 1) { TogglePreview(); e.Handled = true; }
+        else if (e.Key == VirtualKey.Escape && IsPreviewOpen) { ClosePreview(); e.Handled = true; }
+    }
+
+    static bool CtrlDown() => Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
+        .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
 
     async void List_KeyDown(object s, KeyRoutedEventArgs e)
     {
@@ -764,6 +782,14 @@ public sealed partial class ExplorerPane : UserControl
         menu.Items.Add(Item("Klipp ut", Symbol.Cut, async () => await CopyToClipboardAsync(true), sel.Count > 0));
         menu.Items.Add(Item("Kopier", Symbol.Copy, async () => await CopyToClipboardAsync(false), sel.Count > 0));
         menu.Items.Add(Item("Lim inn", Symbol.Paste, async () => await PasteAsync(), CanPaste()));
+        var archives = Fs.IsRemote ? new List<FileItem>() : sel.Where(i => !i.IsDirectory && Extractor.IsArchive(i.Name)).ToList();
+        if (archives.Count > 0 && archives.Count == sel.Count)
+        {
+            menu.Items.Add(new MenuFlyoutSeparator());
+            var one = archives.Count == 1 ? Extractor.BaseName(archives[0].Name) : null;
+            menu.Items.Add(Item(one != null ? $"Pakk ut til «{one}»" : "Pakk ut til egne mapper", Symbol.OpenWith, async () => await ExtractAsync(archives, true)));
+            menu.Items.Add(Item("Pakk ut hit", Symbol.OpenWith, async () => await ExtractAsync(archives, false)));
+        }
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Kopier til andre rute (F5)", Symbol.Copy, () => TransferRequested?.Invoke(this, false), sel.Count > 0));
         menu.Items.Add(Item("Flytt til andre rute (F6)", Symbol.MoveToFolder, () => TransferRequested?.Invoke(this, true), sel.Count > 0));
@@ -782,6 +808,30 @@ public sealed partial class ExplorerPane : UserControl
         }
         menu.Items.Add(Item("Åpne terminal her", Symbol.Admin, () => TerminalRequested?.Invoke(Fs, TerminalFolder(sel))));
         menu.ShowAt(lv, e.GetPosition(lv));
+    }
+
+    async Task ExtractAsync(List<FileItem> archives, bool intoOwnFolder)
+    {
+        string? lastDest = null;
+        try
+        {
+            foreach (var a in archives)
+            {
+                SetBusy($"Pakker ut {a.Name}…");
+                var parent = Path.GetDirectoryName(a.FullPath) ?? CurrentPath;
+                var dest = intoOwnFolder ? Extractor.UniqueDir(parent, Extractor.BaseName(a.Name)) : parent;
+                await Extractor.ExtractAsync(a.FullPath, dest);
+                lastDest = dest;
+            }
+        }
+        catch (Exception ex) { await Dialogs.ErrorAsync(XamlRoot, "Kunne ikke pakke ut", ex.Message); }
+        finally
+        {
+            SetBusy(null);
+            await RefreshAsync();
+        }
+        if (intoOwnFolder && archives.Count == 1 && lastDest != null && Directory.Exists(lastDest))
+            await NavigateAsync(lastDest);
     }
 
     MenuFlyoutSubItem BuildFolderColorMenu(List<string> dirs)

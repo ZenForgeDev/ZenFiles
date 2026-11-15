@@ -9,6 +9,7 @@ public sealed class SessionTab
     public string RightPath { get; set; } = "";
     public bool LeftGrid { get; set; }    // ikonvisning i stedet for liste
     public bool RightGrid { get; set; }
+    public bool Pinned { get; set; }      // festet fane
 }
 
 public sealed class SessionWindow
