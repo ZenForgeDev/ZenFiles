@@ -17,6 +17,9 @@ public sealed class SettingsData
     public bool MobileDevices { get; set; } = true;
 
     public bool PhoneAndroid { get; set; } = true;
+
+    /// <summary>Spør GitHub om nyere versjon ved oppstart og hver 12. time.</summary>
+    public bool UpdateCheck { get; set; } = true;
 }
 
 /// <summary>Enkle innstillinger i %LOCALAPPDATA%\ZenFiles\settings.json.</summary>
@@ -59,6 +62,12 @@ public static class AppSettings
     {
         get => string.IsNullOrEmpty(Data.Theme) ? "standard" : Data.Theme;
         set { Data.Theme = value; Write(); }
+    }
+
+    public static bool UpdateCheck
+    {
+        get => Data.UpdateCheck;
+        set { Data.UpdateCheck = value; Write(); }
     }
 
     public static bool MobileDevices

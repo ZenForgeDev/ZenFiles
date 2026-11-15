@@ -81,6 +81,39 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>Velger for tema i innstillinger.</summary>
+    StackPanel BuildUpdateSetting()
+    {
+        var box = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
+        var sw = new ToggleSwitch { Header = "Se etter oppdateringer", OnContent = "På", OffContent = "Av", IsOn = AppSettings.UpdateCheck };
+        var status = new TextBlock { FontSize = 12, Opacity = 0.7, TextWrapping = TextWrapping.Wrap };
+        var btn = new Button { Content = "Sjekk nå", Padding = new Thickness(12, 4, 12, 4) };
+
+        sw.Toggled += async (_, _) =>
+        {
+            AppSettings.UpdateCheck = sw.IsOn;
+            if (sw.IsOn) status.Text = await UpdateChecker.CheckAsync();
+            else { UpdateChecker.Clear(); status.Text = ""; }
+        };
+        btn.Click += async (_, _) =>
+        {
+            btn.IsEnabled = false;
+            status.Text = "Sjekker…";
+            status.Text = await UpdateChecker.CheckAsync();
+            btn.IsEnabled = true;
+        };
+
+        box.Children.Add(sw);
+        box.Children.Add(btn);
+        box.Children.Add(status);
+        box.Children.Add(new TextBlock
+        {
+            Text = "Ved oppstart og hver 12. time spør ZenFiles GitHub om det finnes en nyere versjon. Ingen filer eller " +
+                   "personopplysninger sendes, men GitHub ser IP-adressen din som ved all annen nettrafikk. Ingenting installeres automatisk.",
+            FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
+        });
+        return box;
+    }
+
     StackPanel BuildMobileSetting()
     {
         var box = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
@@ -186,9 +219,13 @@ public sealed partial class MainWindow : Window
         PhoneList.ItemsSource = _phones;
         MobileDevices.Changed += OnPhonesChanged;
         RefreshPhones();
+        UpdateChecker.Changed += RefreshUpdateCard;
+        RefreshUpdateCard();
         _quick.CollectionChanged += (_, _) => { if (!_loadingFav) SaveFavorites(); };
         BuildSidebar();
 
+        // Ctrl+C/X/V/A: fanges for hele vinduet (også når fokus står i sidepanelet), men aldri i tekstfelt
+        Root.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(Root_KeyDown), true);
         AddAccel(VirtualKey.T, VirtualKeyModifiers.Control, () => NewExplorerTab(Home));
         AddAccel(VirtualKey.W, VirtualKeyModifiers.Control, CloseCurrentTab);
         AddAccel(VirtualKey.D, VirtualKeyModifiers.Control, ToggleDual);
@@ -239,6 +276,7 @@ public sealed partial class MainWindow : Window
             FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
         });
         panel.Children.Add(BuildMobileSetting());
+        panel.Children.Add(BuildUpdateSetting());
         panel.Children.Add(BuildThemeSetting());
         panel.Children.Add(BuildFolderColorSetting());
         var ver = System.Reflection.Assembly.GetExecutingAssembly()
@@ -254,6 +292,7 @@ public sealed partial class MainWindow : Window
         App.Windows.Add(this);
         Closed += OnWindowClosed;
         AppWindow.Changed += AppWindow_Changed;
+        AppWindow.Closing += (_, _) => CaptureGeometry();
 
         if (empty) return;   // venter på en fane som flyttes hit
         if (session != null) RestoreSession(session);
@@ -266,17 +305,72 @@ public sealed partial class MainWindow : Window
     void AppWindow_Changed(AppWindow sender, AppWindowChangedEventArgs a)
     {
         if (!a.DidPositionChange && !a.DidSizeChange) return;
+        CaptureGeometry();
+        App.RequestSessionSave();
+    }
+
+    bool _geoLocked;
+    SessionWindow? _pendingGeo;
+
+    /// <summary>
+    /// Flytter først og endrer størrelse etterpå. Hvis vinduet flyttes til en skjerm med annen skalering (DPI) samtidig som
+    /// størrelsen settes, regner Windows størrelsen om, og vinduet blir feil. Da må vinduet først ligge på riktig skjerm.
+    /// </summary>
+    void ApplySavedGeometry(SessionWindow sw)
+    {
         try
         {
-            if (sender.Presenter is OverlappedPresenter p)
+            var r = new RectInt32(sw.X, sw.Y, sw.W, sw.H);
+            if (DisplayArea.GetFromRect(r, DisplayAreaFallback.None) != null)
+                AppWindow.Move(new PointInt32(r.X, r.Y));   // skjermen finnes ikke lenger hvis ikke: da lar vi Windows plassere vinduet
+            AppWindow.Resize(new SizeInt32(r.Width, r.Height));
+        }
+        catch { }
+    }
+
+    void OnFirstActivated(object sender, WindowActivatedEventArgs a)
+    {
+        if (_pendingGeo is not { } g) return;
+        _pendingGeo = null;
+        Activated -= OnFirstActivated;
+
+        // Når vinduet er vist har Windows landet på skjermens DPI: sett posisjon og størrelse én gang til, og lås opp etterpå.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            ApplySavedGeometry(g);
+            if (g.Maximized && AppWindow.Presenter is OverlappedPresenter p) { try { p.Maximize(); } catch { } }
+
+            var t = DispatcherQueue.CreateTimer();
+            t.Interval = TimeSpan.FromMilliseconds(700);
+            t.IsRepeating = false;
+            t.Tick += (_, _) =>
+            {
+                if (!g.Maximized) ApplySavedGeometry(g);
+                _geoLocked = false;
+                CaptureGeometry();
+            };
+            t.Start();
+        });
+    }
+
+    /// <summary>Leser plassering og størrelse rett fra vinduet. Gjøres også ved lagring og lukking, så vi ikke er avhengige av at endringsmeldinger har kommet.</summary>
+    void CaptureGeometry()
+    {
+        if (_geoLocked) return;
+        try
+        {
+            if (AppWindow.Presenter is OverlappedPresenter p)
             {
                 _maximized = p.State == OverlappedPresenterState.Maximized;
                 if (p.State == OverlappedPresenterState.Restored)
-                    _geo = new RectInt32(sender.Position.X, sender.Position.Y, sender.Size.Width, sender.Size.Height);
+                {
+                    var pos = AppWindow.Position; var size = AppWindow.Size;
+                    if (size.Width > 100 && size.Height > 100)
+                        _geo = new RectInt32(pos.X, pos.Y, size.Width, size.Height);
+                }
             }
         }
-        catch { }
-        App.RequestSessionSave();
+        catch { }   // vinduet kan allerede være borte ved lukking; da beholder vi forrige kjente verdi
     }
 
     void OnWindowClosed(object sender, WindowEventArgs args)
@@ -288,6 +382,7 @@ public sealed partial class MainWindow : Window
         App.Windows.Remove(this);
 
         MobileDevices.Changed -= OnPhonesChanged;
+        UpdateChecker.Changed -= RefreshUpdateCard;
         foreach (var t in Tabs.TabItems.OfType<TabViewItem>().ToList())
         {
             (t.Tag as Action)?.Invoke();
@@ -304,6 +399,7 @@ public sealed partial class MainWindow : Window
     /// <summary>Øyeblikksbilde av dette vinduet til økt-filen. Bare lokale utforsker-faner tas med.</summary>
     public SessionWindow Snapshot()
     {
+        CaptureGeometry();
         var sw = new SessionWindow { Maximized = _maximized };
         if (_geo.Width > 0 && _geo.Height > 0) { sw.X = _geo.X; sw.Y = _geo.Y; sw.W = _geo.Width; sw.H = _geo.Height; }
         foreach (var t in Tabs.TabItems.OfType<TabViewItem>())
@@ -328,11 +424,13 @@ public sealed partial class MainWindow : Window
         {
             if (sw.W > 0 && sw.H > 0)
             {
-                var r = new RectInt32(sw.X, sw.Y, sw.W, sw.H);
-                if (DisplayArea.GetFromRect(r, DisplayAreaFallback.None) != null) AppWindow.MoveAndResize(r);   // hopper over skjermer som ikke finnes lenger
+                _geo = new RectInt32(sw.X, sw.Y, sw.W, sw.H);   // husk den lagrede størrelsen selv om ingen endringsmelding kommer før neste lagring
+                _geoLocked = true;   // ikke la mellomstørrelser underveis overskrive den lagrede
+                _pendingGeo = sw;
+                ApplySavedGeometry(sw);
+                Activated += OnFirstActivated;   // gjør det på nytt når vinduet vises (se under)
             }
-            if (sw.Maximized && AppWindow.Presenter is OverlappedPresenter p)
-                DispatcherQueue.TryEnqueue(() => { try { p.Maximize(); } catch { } });
+            _maximized = sw.Maximized;
         }
         catch { }
 
@@ -439,6 +537,23 @@ public sealed partial class MainWindow : Window
     }
 
     void OnPhonesChanged() => RefreshPhones();
+
+    void RefreshUpdateCard()
+    {
+        var u = UpdateChecker.Available;
+        bool show = u != null && AppSettings.UpdateCheck && UpdateChecker.Dismissed != u.Version;
+        UpdateCard.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        if (show) UpdateText.Text = $"ZenFiles {u!.Version} er tilgjengelig (du har {UpdateChecker.CurrentVersion}).";
+    }
+
+    void UpdateDownload_Click(object s, RoutedEventArgs e)
+    {
+        if (UpdateChecker.Available is not { } u) return;
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(u.Url) { UseShellExecute = true }); }
+        catch { }
+    }
+
+    void UpdateDismiss_Click(object s, RoutedEventArgs e) => UpdateChecker.Dismiss();
 
     public void RefreshPhones()
     {
@@ -1055,6 +1170,18 @@ public sealed partial class MainWindow : Window
             AdoptTab(tab, e.DropIndex);
             if (src != null && src != this && src.Tabs.TabItems.Count == 0) src.Close();
         }
+    }
+
+    async void Root_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key is not (VirtualKey.C or VirtualKey.X or VirtualKey.V or VirtualKey.A)) return;
+        if (e.OriginalSource is TextBox or PasswordBox or RichEditBox or AutoSuggestBox or ComboBox) return;
+        bool Down(VirtualKey k) => Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(k)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+        if (!Down(VirtualKey.Control) || Down(VirtualKey.Shift) || Down(VirtualKey.Menu)) return;
+        if (CurrentExplorer is not { } ex) return;   // terminalfaner og andre faner håndterer tastene selv
+        e.Handled = true;
+        await ex.Active.HandleClipboardKeyAsync(e.Key);
     }
 
     void AddAccel(VirtualKey key, VirtualKeyModifiers mod, Action act)

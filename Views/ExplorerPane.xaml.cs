@@ -73,6 +73,8 @@ public sealed partial class ExplorerPane : UserControl
         ListArea.PointerWheelChanged += Area_PointerWheel;
         ListArea.PointerReleased += Area_PointerEnded;
         ListArea.PointerCaptureLost += Area_PointerEnded;
+        Loaded += (_, _) => StartWatch();
+        Unloaded += (_, _) => StopWatch();
         _ = NavigateAsync(startPath, push: false);
     }
 
@@ -111,6 +113,7 @@ public sealed partial class ExplorerPane : UserControl
         var top = lv.TransformToVisual(ListArea).TransformPoint(new Windows.Foundation.Point(0, 0)).Y;
         if (!_grid && cp.Position.Y < top) return;   // overskriften
 
+        lv.Focus(FocusState.Pointer);   // slik at piltaster og snarveier virker etter klikk på tom plass
         bool ctrl = e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control);
         _mBase = ctrl ? lv.SelectedItems.Cast<object>().ToList() : new List<object>();
         if (!ctrl) lv.SelectedItems.Clear();
@@ -232,6 +235,8 @@ public sealed partial class ExplorerPane : UserControl
             HideEditor();
             Apply();
             LocationChanged?.Invoke(this);
+            StartWatch();
+            FocusListIfNeeded();
         }
         catch (Exception ex)
         {
@@ -756,6 +761,10 @@ public sealed partial class ExplorerPane : UserControl
             var parent = sel[0].Where;
             menu.Items.Add(Item("Åpne overordnet mappe", Symbol.OpenLocal, async () => await NavigateAsync(parent)));
         }
+        menu.Items.Add(Item("Klipp ut", Symbol.Cut, async () => await CopyToClipboardAsync(true), sel.Count > 0));
+        menu.Items.Add(Item("Kopier", Symbol.Copy, async () => await CopyToClipboardAsync(false), sel.Count > 0));
+        menu.Items.Add(Item("Lim inn", Symbol.Paste, async () => await PasteAsync(), CanPaste()));
+        menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Kopier til andre rute (F5)", Symbol.Copy, () => TransferRequested?.Invoke(this, false), sel.Count > 0));
         menu.Items.Add(Item("Flytt til andre rute (F6)", Symbol.MoveToFolder, () => TransferRequested?.Invoke(this, true), sel.Count > 0));
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -868,9 +877,249 @@ public sealed partial class ExplorerPane : UserControl
         finally { SetBusy(null); await RefreshAsync(); }
     }
 
+    // ───────── Utklippstavle (Ctrl+C / X / V / A) ─────────
+
+    sealed record ClipState(IFileSystem Fs, List<FileItem> Items, bool Cut, ExplorerPane Pane);
+    static ClipState? _clip;
+
+    bool CanPaste()
+    {
+        if (CurrentPath.Length == 0 && !Fs.IsRemote) return false;
+        try
+        {
+            var v = Clipboard.GetContent();
+            return (v.Contains("ZenFiles.Clip") && _clip != null) || v.Contains(StandardDataFormats.StorageItems);
+        }
+        catch { return false; }
+    }
+
+    /// <summary>Kalles fra vinduet når Ctrl+C/X/V/A trykkes et sted utenfor tekstfelt.</summary>
+    public async Task HandleClipboardKeyAsync(VirtualKey key)
+    {
+        switch (key)
+        {
+            case VirtualKey.C: await CopyToClipboardAsync(false); break;
+            case VirtualKey.X: await CopyToClipboardAsync(true); break;
+            case VirtualKey.V: await PasteAsync(); break;
+            case VirtualKey.A: ActiveList.SelectAll(); break;
+        }
+    }
+
+    async Task CopyToClipboardAsync(bool cut)
+    {
+        var sel = SelectedItems.Where(i => !i.IsDrive).ToList();
+        if (sel.Count == 0) return;
+        try
+        {
+            var dp = new DataPackage { RequestedOperation = cut ? DataPackageOperation.Move : DataPackageOperation.Copy };
+            dp.SetData("ZenFiles.Clip", "1");
+
+            // Lokale filer legges også ut som vanlige filer, så de kan limes inn i Utforsker og andre programmer.
+            if (!Fs.IsRemote)
+            {
+                var storage = new List<IStorageItem>();
+                foreach (var it in sel)
+                {
+                    try
+                    {
+                        storage.Add(it.IsDirectory ? await StorageFolder.GetFolderFromPathAsync(it.FullPath)
+                                                   : await StorageFile.GetFileFromPathAsync(it.FullPath));
+                    }
+                    catch { /* låste/skjulte filer hoppes over */ }
+                }
+                if (storage.Count > 0) dp.SetStorageItems(storage, false);
+            }
+
+            _clip = new ClipState(Fs, sel, cut, this);
+            Clipboard.SetContent(dp);
+            Status.Text = cut ? $"{sel.Count} klippet ut" : $"{sel.Count} kopiert";
+        }
+        catch (Exception ex) { await Dialogs.ErrorAsync(XamlRoot, "Kunne ikke kopiere", ex.Message); }
+    }
+
+    public async Task PasteAsync()
+    {
+        if (CurrentPath.Length == 0 && !Fs.IsRemote) return;
+        try
+        {
+            var view = Clipboard.GetContent();
+            IFileSystem? srcFs = null;
+            List<FileItem>? items = null;
+            ExplorerPane? srcPane = null;
+            bool move = false, ours = false;
+
+            if (view.Contains("ZenFiles.Clip") && _clip is { } c)
+            {
+                srcFs = c.Fs; items = c.Items; move = c.Cut; srcPane = c.Pane; ours = true;
+            }
+            else if (view.Contains(StandardDataFormats.StorageItems))
+            {
+                var si = await view.GetStorageItemsAsync();
+                srcFs = LocalFileSystem.Instance;
+                items = si.Where(x => !string.IsNullOrEmpty(x.Path))
+                          .Select(x => new FileItem { Name = x.Name, FullPath = x.Path, IsDirectory = x.IsOfType(StorageItemTypes.Folder) })
+                          .ToList();
+                move = view.RequestedOperation.HasFlag(DataPackageOperation.Move);   // «klipp ut» i Utforsker
+            }
+
+            if (items == null || items.Count == 0 || srcFs == null) return;
+
+            // Kopiering inn i samme mappe gir «navn - kopi», som i Utforsker. Flytting dit gjør ingenting.
+            await ReceiveAsync(srcFs, items, move, srcPane, null, allowSameFolder: !move);
+
+            if (ours && move) _clip = null;
+        }
+        catch (Exception ex) { await Dialogs.ErrorAsync(XamlRoot, "Kunne ikke lime inn", ex.Message); }
+    }
+
+    // ───────── Automatisk oppdatering av lokale mapper ─────────
+
+    FileSystemWatcher? _watcher;
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _watchTimer;
+    bool _refreshing;
+
+    void StartWatch()
+    {
+        StopWatch();
+        if (Fs.IsRemote || !_loaded || _searchMode || string.IsNullOrEmpty(CurrentPath)) return;
+        try
+        {
+            if (!Directory.Exists(CurrentPath)) return;
+            var w = new FileSystemWatcher(CurrentPath)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite
+                             | NotifyFilters.Size | NotifyFilters.Attributes,
+                IncludeSubdirectories = false,
+                InternalBufferSize = 64 * 1024
+            };
+            w.Created += OnFolderChanged;
+            w.Deleted += OnFolderChanged;
+            w.Changed += OnFolderChanged;
+            w.Renamed += OnFolderChanged;
+            w.Error += (_, _) => OnFolderChanged(null, null!);   // bufferen rant over, eller mappen ble borte: les listen på nytt
+            w.EnableRaisingEvents = true;
+            _watcher = w;
+        }
+        catch { /* ingen tilgang eller nettverksstasjon uten støtte: da får man bruke Oppdater som før */ }
+    }
+
+    void StopWatch()
+    {
+        _watchTimer?.Stop();
+        var w = _watcher;
+        _watcher = null;
+        if (w == null) return;
+        try { w.EnableRaisingEvents = false; w.Dispose(); } catch { }
+    }
+
+    void OnFolderChanged(object? s, FileSystemEventArgs? e)
+    {
+        // Mange hendelser kommer samtidig (f.eks. under kopiering): vent litt og les listen én gang.
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_watchTimer == null)
+            {
+                _watchTimer = DispatcherQueue.CreateTimer();
+                _watchTimer.IsRepeating = false;
+                _watchTimer.Tick += async (_, _) => await SilentRefreshAsync();
+            }
+            _watchTimer.Interval = TimeSpan.FromMilliseconds(400);
+            _watchTimer.Stop();
+            _watchTimer.Start();
+        });
+    }
+
+    static bool SameListing(List<FileItem> a, List<FileItem> b)
+    {
+        if (a.Count != b.Count) return false;
+        var d = new Dictionary<string, FileItem>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in a) d.TryAdd(i.FullPath, i);
+        foreach (var n in b)
+            if (!d.TryGetValue(n.FullPath, out var o) || o.Size != n.Size || o.Modified != n.Modified || o.IsDirectory != n.IsDirectory)
+                return false;
+        return true;
+    }
+
+    /// <summary>Leser mappen på nytt uten «Laster…»-visning og uten å miste markering, rulling og miniatyrer.</summary>
+    async Task SilentRefreshAsync()
+    {
+        if (_refreshing || !_loaded || _searchMode || Fs.IsRemote || CurrentPath.Length == 0) return;
+
+        // Ikke bygg listen på nytt midt i en dra-operasjon, markeringsboks eller overføring: prøv igjen om litt.
+        if (_marquee || BusyPanel.Visibility == Visibility.Visible || (_drag is { } d && ReferenceEquals(d.Pane, this)))
+        {
+            _watchTimer?.Stop();
+            if (_watchTimer != null) { _watchTimer.Interval = TimeSpan.FromMilliseconds(1000); _watchTimer.Start(); }
+            return;
+        }
+
+        _refreshing = true;
+        try
+        {
+            var path = CurrentPath;
+            List<FileItem> list;
+            try { list = await Fs.ListAsync(path, _showHidden); }
+            catch
+            {
+                // Mappen er slettet eller flyttet: gå til nærmeste mappe som finnes
+                if (!Directory.Exists(path))
+                {
+                    var p = path;
+                    while (p.Length > 0 && !Directory.Exists(p)) p = Fs.Parent(p) ?? "";
+                    await NavigateAsync(p, push: false);
+                }
+                return;
+            }
+            if (path != CurrentPath || _searchMode) return;
+            if (SameListing(_all, list)) return;
+
+            var old = new Dictionary<string, FileItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var o in _all) old.TryAdd(o.FullPath, o);
+            foreach (var n in list)
+                if (old.TryGetValue(n.FullPath, out var o) && o.Size == n.Size && o.Modified == n.Modified)
+                    n.Thumbnail = o.Thumbnail;
+
+            var selected = SelectedItems.Select(i => i.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var lv = ActiveList;
+            var sv = FindScroll(lv);
+            double offset = sv?.VerticalOffset ?? 0;
+            bool hadFocus = IsInsideList(FocusManager.GetFocusedElement(XamlRoot) as DependencyObject, lv);
+
+            _all = list;
+            Apply();
+
+            foreach (var it in _items)
+                if (selected.Contains(it.FullPath)) lv.SelectedItems.Add(it);
+
+            DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+            {
+                FindScroll(lv)?.ChangeView(null, offset, null, true);
+                if (hadFocus) lv.Focus(FocusState.Programmatic);
+            });
+        }
+        catch { /* neste endring prøver på nytt */ }
+        finally { _refreshing = false; }
+    }
+
+    static bool IsInsideList(DependencyObject? el, DependencyObject list)
+    {
+        for (; el != null; el = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(el))
+            if (ReferenceEquals(el, list)) return true;
+        return false;
+    }
+
+    /// <summary>Etter at man har åpnet en mappe er raden man trykket på borte, og tastaturet har ingen mottaker. Flytt fokus til listen.</summary>
+    void FocusListIfNeeded()
+    {
+        if (XamlRoot == null) return;
+        var cur = FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+        if (cur is TextBox) return;
+        if (cur == null || IsInsideList(cur, this)) ActiveList.Focus(FocusState.Programmatic);
+    }
+
     // ───────── Overføring (kopier/flytt/dra-og-slipp) ─────────
 
-    public async Task ReceiveAsync(IFileSystem srcFs, IEnumerable<FileItem> items, bool move, ExplorerPane? srcPane, string? dstDir = null)
+    public async Task ReceiveAsync(IFileSystem srcFs, IEnumerable<FileItem> items, bool move, ExplorerPane? srcPane, string? dstDir = null, bool allowSameFolder = false)
     {
         dstDir ??= CurrentPath;
         if (dstDir.Length == 0 && !Fs.IsRemote)
@@ -879,7 +1128,7 @@ public sealed partial class ExplorerPane : UserControl
             return;
         }
 
-        var list = FilterTransferable(srcFs, items, dstDir);
+        var list = FilterTransferable(srcFs, items, dstDir, allowSameFolder);
         if (list.Count == 0) return;
 
         var progress = new Progress<string>(n => SetBusy($"Overfører {n}…"));
@@ -956,11 +1205,11 @@ public sealed partial class ExplorerPane : UserControl
     }
 
     /// <summary>Fjerner det som ikke gir mening å overføre (stasjoner, ting som allerede ligger i målmappen, mappen selv).</summary>
-    List<FileItem> FilterTransferable(IFileSystem srcFs, IEnumerable<FileItem> items, string dstDir)
+    List<FileItem> FilterTransferable(IFileSystem srcFs, IEnumerable<FileItem> items, string dstDir, bool allowSameFolder = false)
     {
         var dst = dstDir.TrimEnd('\\', '/');
         var list = items.Where(i => !i.IsDrive && i.FullPath.TrimEnd('\\', '/') != dst).ToList();
-        if (ReferenceEquals(srcFs, Fs))
+        if (ReferenceEquals(srcFs, Fs) && !allowSameFolder)
             list = list.Where(i => srcFs.Parent(i.FullPath)?.TrimEnd('\\', '/') != dst).ToList();
         return list;
     }

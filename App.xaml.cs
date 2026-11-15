@@ -44,6 +44,7 @@ public partial class App : Application
 
         _dq = DispatcherQueue.GetForCurrentThread();
         MobileDevices.Apply(_dq);
+        UpdateChecker.StartBackground(_dq);
         Themes.ApplyResources();   // tema og accent må være satt før første vindu opprettes
 
         // Kjører ZenFiles allerede, åpnes et nytt vindu der, og denne prosessen avslutter.

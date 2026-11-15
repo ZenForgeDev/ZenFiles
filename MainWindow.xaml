@@ -47,6 +47,7 @@
                 <RowDefinition Height="46"/>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Text="ZenFiles" FontWeight="SemiBold" FontSize="13" Opacity="0.7"
@@ -88,7 +89,18 @@
                 </StackPanel>
             </ScrollViewer>
 
-            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="2" Margin="2,6,0,0">
+            <Border x:Name="UpdateCard" Grid.Row="2" Visibility="Collapsed" Margin="8,6,8,2" Padding="10,8" CornerRadius="8"
+                    Background="{StaticResource ZenSelectSoftBrush}">
+                <StackPanel Spacing="6">
+                    <TextBlock x:Name="UpdateText" FontSize="13" TextWrapping="Wrap"/>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Button Content="Last ned" Click="UpdateDownload_Click" Padding="10,4"/>
+                        <Button Content="Senere" Click="UpdateDismiss_Click" Padding="10,4" Background="Transparent" BorderThickness="0"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="2" Margin="2,6,0,0">
                 <Button Click="NewTerminal_Click" Background="Transparent" BorderThickness="0" Padding="9,7"
                         ToolTipService.ToolTip="Ny terminal (Ctrl+Shift+T)">
                     <FontIcon Glyph="&#xE756;" FontSize="15"/>
