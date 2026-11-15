@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.UI;
 using ZenFiles.Models;
+using ZenFiles.Services;
 
 namespace ZenFiles.Views;
 
@@ -25,9 +26,15 @@ public sealed partial class ItemIcon : UserControl
         Loaded += (_, _) =>
         {
             if (Item != null) { Item.PropertyChanged -= OnItemProp; Item.PropertyChanged += OnItemProp; }
+            FolderColors.Changed -= OnColorsChanged;
+            FolderColors.Changed += OnColorsChanged;
             Refresh();
         };
-        Unloaded += (_, _) => { if (Item != null) Item.PropertyChanged -= OnItemProp; };
+        Unloaded += (_, _) =>
+        {
+            if (Item != null) Item.PropertyChanged -= OnItemProp;
+            FolderColors.Changed -= OnColorsChanged;
+        };
     }
 
     static void OnItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -36,6 +43,23 @@ public sealed partial class ItemIcon : UserControl
         if (e.OldValue is FileItem o) o.PropertyChanged -= self.OnItemProp;
         if (e.NewValue is FileItem n) { n.PropertyChanged -= self.OnItemProp; n.PropertyChanged += self.OnItemProp; }
         self.Refresh();
+    }
+
+    void OnColorsChanged()
+    {
+        // Utløses fra et hvilket som helst vindu; sørg for at vi tegner på riktig tråd.
+        if (DispatcherQueue.HasThreadAccess) ApplyFolderColor();
+        else DispatcherQueue.TryEnqueue(ApplyFolderColor);
+    }
+
+    void ApplyFolderColor()
+    {
+        var it = Item;
+        if (it == null || !it.IsDirectory || it.IsDrive) return;
+        // Eksterne mapper (SFTP) får alltid standardfarge, siden stien kan være lik en lokal sti.
+        var c = it.Remote ? FolderColors.Parse(FolderColors.DefaultHex) : FolderColors.Resolve(it.FullPath);
+        var (bt, bb, ft, fb) = FolderColors.Shades(c);
+        BackTop.Color = bt; BackBottom.Color = bb; FrontTop.Color = ft; FrontBottom.Color = fb;
     }
 
     void OnItemProp(object? s, PropertyChangedEventArgs e)
@@ -69,6 +93,7 @@ public sealed partial class ItemIcon : UserControl
         ThumbB.Visibility = thumb ? Visibility.Visible : Visibility.Collapsed;
 
         if (thumb) Thumb.Source = it.Thumbnail;
+        if (it.IsDirectory && !it.IsDrive) ApplyFolderColor();
 
         if (!it.IsDirectory)
         {

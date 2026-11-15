@@ -8,13 +8,17 @@ namespace ZenFiles.Views;
 
 public static class Dialogs
 {
+    /// <summary>ContentDialog arver ikke vinduets tema av seg selv; vi sender det med.</summary>
+    public static ElementTheme ThemeOf(XamlRoot root) =>
+        root.Content is FrameworkElement fe ? fe.RequestedTheme : ElementTheme.Default;
+
     public static async Task<string?> PromptAsync(XamlRoot root, string title, string text = "", string primary = "OK")
     {
         var box = new TextBox { Text = text, MinWidth = 340 };
         box.Loaded += (_, _) => { box.Focus(FocusState.Programmatic); box.SelectAll(); };
         var d = new ContentDialog
         {
-            XamlRoot = root, Title = title, Content = box,
+            XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = box,
             PrimaryButtonText = primary, CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary
         };
         return await d.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(box.Text)
@@ -27,7 +31,7 @@ public static class Dialogs
         box.Loaded += (_, _) => box.Focus(FocusState.Programmatic);
         var d = new ContentDialog
         {
-            XamlRoot = root, Title = title, Content = box,
+            XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = box,
             PrimaryButtonText = "Koble til", CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary
         };
         return await d.ShowAsync() == ContentDialogResult.Primary ? box.Password : null;
@@ -37,17 +41,36 @@ public static class Dialogs
     {
         var d = new ContentDialog
         {
-            XamlRoot = root, Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = primary, CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Close
         };
         return await d.ShowAsync() == ContentDialogResult.Primary;
+    }
+
+    /// <summary>Fargevelger. Returnerer #RRGGBB eller null hvis brukeren avbryter.</summary>
+    public static async Task<string?> PickColorAsync(XamlRoot root, string title, string startHex)
+    {
+        var picker = new ColorPicker
+        {
+            Color = FolderColors.Parse(startHex),
+            IsAlphaEnabled = false,
+            IsColorSliderVisible = true,
+            IsHexInputVisible = true,
+            IsMoreButtonVisible = false
+        };
+        var d = new ContentDialog
+        {
+            XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = picker,
+            PrimaryButtonText = "Bruk", CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary
+        };
+        return await d.ShowAsync() == ContentDialogResult.Primary ? FolderColors.ToHex(picker.Color) : null;
     }
 
     public static async Task ErrorAsync(XamlRoot root, string title, string message)
     {
         var d = new ContentDialog
         {
-            XamlRoot = root, Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
+            XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
             CloseButtonText = "OK"
         };
         await d.ShowAsync();
@@ -93,7 +116,7 @@ public static class ConnectionDialog
 
         var d = new ContentDialog
         {
-            XamlRoot = root,
+            XamlRoot = root, RequestedTheme = Dialogs.ThemeOf(root),
             Title = existing == null ? "Ny SSH/SFTP-tilkobling" : "Rediger tilkobling",
             Content = new ScrollViewer { Content = panel },
             PrimaryButtonText = "Lagre", CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary

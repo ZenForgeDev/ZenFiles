@@ -63,7 +63,7 @@
         </DataTemplate>
     </UserControl.Resources>
 
-    <Grid x:Name="Layout" Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="8,0,0,0"
+    <Grid x:Name="Layout" Background="{StaticResource ZenPanelBrush}" CornerRadius="8,0,0,0"
           AllowDrop="True" DragOver="Pane_DragOver" Drop="Pane_Drop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -184,9 +184,9 @@
                       DoubleTapped="List_DoubleTapped" RightTapped="List_RightTapped" KeyDown="List_KeyDown"
                       DragItemsStarting="List_DragStarting" DragItemsCompleted="List_DragCompleted" SelectionChanged="List_SelectionChanged">
                 <ListView.Resources>
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#FF0A6CFF"/>
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#FF1A78FF"/>
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#FF005BE0"/>
+                    <StaticResource x:Key="ListViewItemBackgroundSelected" ResourceKey="ZenSelectBrush"/>
+                    <StaticResource x:Key="ListViewItemBackgroundSelectedPointerOver" ResourceKey="ZenSelectHoverBrush"/>
+                    <StaticResource x:Key="ListViewItemBackgroundSelectedPressed" ResourceKey="ZenSelectPressedBrush"/>
                     <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="White"/>
                     <SolidColorBrush x:Key="ListViewItemForegroundSelectedPointerOver" Color="White"/>
                     <SolidColorBrush x:Key="ListViewItemForegroundSelectedPressed" Color="White"/>
@@ -200,14 +200,14 @@
                       DoubleTapped="List_DoubleTapped" RightTapped="List_RightTapped" KeyDown="List_KeyDown"
                       DragItemsStarting="List_DragStarting" DragItemsCompleted="List_DragCompleted" SelectionChanged="List_SelectionChanged">
                 <GridView.Resources>
-                    <SolidColorBrush x:Key="GridViewItemBackgroundSelected" Color="#330A6CFF"/>
-                    <SolidColorBrush x:Key="GridViewItemBackgroundSelectedPointerOver" Color="#440A6CFF"/>
+                    <StaticResource x:Key="GridViewItemBackgroundSelected" ResourceKey="ZenSelectSoftBrush"/>
+                    <StaticResource x:Key="GridViewItemBackgroundSelectedPointerOver" ResourceKey="ZenSelectSoftHoverBrush"/>
                     <SolidColorBrush x:Key="GridViewItemSelectionIndicatorBrush" Color="Transparent"/>
                 </GridView.Resources>
             </GridView>
 
             <Canvas Grid.RowSpan="2" Grid.ColumnSpan="2" IsHitTestVisible="False">
-                <Rectangle x:Name="MarqueeRect" Visibility="Collapsed" Fill="#330A6CFF" Stroke="#FF0A6CFF"
+                <Rectangle x:Name="MarqueeRect" Visibility="Collapsed" Fill="{StaticResource ZenSelectSoftBrush}" Stroke="{StaticResource ZenSelectBrush}"
                            StrokeThickness="1" RadiusX="2" RadiusY="2"/>
             </Canvas>
         </Grid>

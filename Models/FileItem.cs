@@ -27,6 +27,8 @@ public sealed class FileItem : INotifyPropertyChanged
     public string FullPath { get; set; } = "";
     public bool IsDirectory { get; set; }
     public bool IsDrive { get; set; }
+    /// <summary>Element på en ekstern server (SFTP). Slike mapper får ikke egen mappefarge.</summary>
+    public bool Remote { get; set; }
     public long Size { get; set; }
     public DateTime Modified { get; set; }
 

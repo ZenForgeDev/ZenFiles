@@ -6,6 +6,17 @@ public sealed class SettingsData
 {
     /// <summary>Lagre åpne vinduer og faner og åpne dem igjen ved neste oppstart. Av som standard.</summary>
     public bool RestoreSession { get; set; }
+
+    /// <summary>Global mappefarge som hex (#RRGGBB). Tom = standard blå.</summary>
+    public string FolderColor { get; set; } = "";
+
+    /// <summary>Id til valgt tema (se Themes.cs). «standard» følger Windows.</summary>
+    public string Theme { get; set; } = "standard";
+
+    /// <summary>Vis mobiler/nettbrett koblet til med USB i sidepanelet.</summary>
+    public bool MobileDevices { get; set; } = true;
+
+    public bool PhoneAndroid { get; set; } = true;
 }
 
 /// <summary>Enkle innstillinger i %LOCALAPPDATA%\ZenFiles\settings.json.</summary>
@@ -42,5 +53,23 @@ public static class AppSettings
     {
         get => Data.RestoreSession;
         set { Data.RestoreSession = value; Write(); }
+    }
+
+    public static string Theme
+    {
+        get => string.IsNullOrEmpty(Data.Theme) ? "standard" : Data.Theme;
+        set { Data.Theme = value; Write(); }
+    }
+
+    public static bool MobileDevices
+    {
+        get => Data.MobileDevices;
+        set { Data.MobileDevices = value; Write(); }
+    }
+
+    public static string FolderColor
+    {
+        get => Data.FolderColor ?? "";
+        set { Data.FolderColor = value ?? ""; Write(); }
     }
 }

@@ -81,6 +81,7 @@ public sealed class SftpFileSystem : IFileSystem, IDisposable
                 Name = f.Name,
                 FullPath = f.FullName,
                 IsDirectory = f.IsDirectory,
+                Remote = true,
                 Size = f.IsDirectory ? 0 : f.Length,
                 Modified = f.LastWriteTime
             });

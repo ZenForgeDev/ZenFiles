@@ -6,7 +6,28 @@ set "OLDCP=%OLDCP: =%"
 chcp 65001 >nul
 cd /d "%~dp0"
 
-echo ==== ZenFiles build ====
+rem ---- Versjonsnummer: lagres i version.txt og spørres om hver gang. Brukes i exe-filen, installeren og appen. ----
+rem Tips: "build.bat 0.2.0" hopper over spørsmålet.
+set "VERSION=0.1.0"
+if exist "%~dp0version.txt" set /p VERSION=<"%~dp0version.txt"
+if not "%~1"=="" (
+    set "VERSION=%~1"
+    goto :verok
+)
+for /f "tokens=1-3 delims=." %%a in ("%VERSION%") do (
+    set "VMA=%%a"
+    set "VMI=%%b"
+    set /a VPA=%%c+1
+)
+set "SUGG=%VMA%.%VMI%.%VPA%"
+echo Forrige versjon: %VERSION%
+set "NEWV="
+set /p "NEWV=Ny versjon (Enter = %SUGG%): "
+if not defined NEWV set "NEWV=%SUGG%"
+set "VERSION=%NEWV%"
+:verok
+
+echo ==== ZenFiles build  -  versjon %VERSION% ====
 echo.
 echo  Hva vil du bygge?
 echo.
@@ -38,8 +59,11 @@ if errorlevel 1 goto :fail
 
 echo.
 echo [2/2] Publiserer (Release, win-x64, self-contained)...
-dotnet publish ZenFiles.csproj -c Release -r win-x64 -p:Platform=x64 --self-contained true -o "%~dp0publish"
+dotnet publish ZenFiles.csproj -c Release -r win-x64 -p:Platform=x64 -p:Version=%VERSION% --self-contained true -o "%~dp0publish"
 if errorlevel 1 goto :fail
+
+rem Publiseringen gikk bra: husk versjonen til neste gang.
+>"%~dp0version.txt" echo(%VERSION%
 
 rem Terminalkontrollen leter etter TerminalControl.xaml i appens rot, men pakken legger den i en undermappe.
 if exist "%~dp0publish\Microsoft.Terminal.WinUI3\TerminalControl.xbf" (
@@ -49,7 +73,7 @@ if exist "%~dp0publish\Microsoft.Terminal.WinUI3\TerminalControl.xbf" (
 if "%MODE%"=="2" goto :installer
 
 echo.
-echo FERDIG: %~dp0publish\ZenFiles.exe
+echo FERDIG: ZenFiles %VERSION%  -  %~dp0publish\ZenFiles.exe
 echo (Bruk denne kopien hvis du slår på "Standard filbehandler" - ikke bin\Debug.)
 echo.
 choice /c JN /m "Starte ZenFiles nå"
@@ -79,10 +103,10 @@ echo Installer Inno Setup fra https://jrsoftware.org/isdl.php og kjør build.bat
 goto :fail
 
 :runiscc
-"%ISCC%" "%~dp0Installer\ZenFiles.iss"
+"%ISCC%" /DAppVersion=%VERSION% "%~dp0Installer\ZenFiles.iss"
 if errorlevel 1 goto :fail
 echo.
-echo FERDIG: %~dp0installer\ZFSetup.exe
+echo FERDIG: ZenFiles %VERSION%  -  %~dp0installer\ZFSetup.exe
 echo.
 choice /c JN /m "Starte installeren nå"
 if errorlevel 2 goto :end

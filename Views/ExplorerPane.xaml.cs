@@ -639,9 +639,29 @@ public sealed partial class ExplorerPane : UserControl
 
     async Task LoadThumbnailsAsync(List<FileItem> items)
     {
-        if (Fs.IsRemote) return;
         _thumbCts?.Cancel();
         var cts = _thumbCts = new CancellationTokenSource();
+        if (Fs is IThumbnailSource ts)
+        {
+            foreach (var it in items.Where(i => i.IsMedia && i.Thumbnail == null))
+            {
+                if (cts.IsCancellationRequested) return;
+                try
+                {
+                    var bytes = await ts.GetThumbnailAsync(it.FullPath);
+                    if (bytes == null || cts.IsCancellationRequested) continue;
+                    using var ras = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+                    await ras.WriteAsync(System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.AsBuffer(bytes));
+                    ras.Seek(0);
+                    var bmp = new BitmapImage { DecodePixelWidth = 96 };
+                    await bmp.SetSourceAsync(ras);
+                    it.Thumbnail = bmp;
+                }
+                catch { }
+            }
+            return;
+        }
+        if (Fs.IsRemote) return;
         foreach (var it in items.Where(i => i.IsMedia && i.Thumbnail == null))
         {
             if (cts.IsCancellationRequested) return;
@@ -743,6 +763,8 @@ public sealed partial class ExplorerPane : UserControl
         menu.Items.Add(Item("Slett (Del)", Symbol.Delete, async () => await DeleteSelectedAsync(), sel.Count > 0));
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(Item("Ny mappe", Symbol.NewFolder, async () => await NewFolderAsync()));
+        var colorDirs = sel.Where(i => i.IsDirectory && !i.IsDrive && !i.Remote).Select(i => i.FullPath).ToList();
+        if (!Fs.IsRemote && colorDirs.Count > 0) menu.Items.Add(BuildFolderColorMenu(colorDirs));
         menu.Items.Add(Item("Kopier sti", Symbol.Link, () => CopyPath(sel)));
         if (!Fs.IsRemote)
         {
@@ -751,6 +773,34 @@ public sealed partial class ExplorerPane : UserControl
         }
         menu.Items.Add(Item("Åpne terminal her", Symbol.Admin, () => TerminalRequested?.Invoke(Fs, TerminalFolder(sel))));
         menu.ShowAt(lv, e.GetPosition(lv));
+    }
+
+    MenuFlyoutSubItem BuildFolderColorMenu(List<string> dirs)
+    {
+        var sub = new MenuFlyoutSubItem { Text = "Mappefarge", Icon = new FontIcon { Glyph = "\uE790" } };   // palett
+        foreach (var sw in FolderColors.Swatches)
+        {
+            var hex = sw.Hex;
+            var mi = new MenuFlyoutItem
+            {
+                Text = sw.Name,
+                Icon = new FontIcon { Glyph = "\uEA3B", Foreground = new SolidColorBrush(FolderColors.Parse(hex)) }   // fylt sirkel
+            };
+            mi.Click += (_, _) => FolderColors.Set(dirs, hex);
+            sub.Items.Add(mi);
+        }
+        var custom = new MenuFlyoutItem { Text = "Egendefinert…", Icon = new FontIcon { Glyph = "\uE771" } };
+        custom.Click += async (_, _) =>
+        {
+            var hex = await Dialogs.PickColorAsync(XamlRoot, "Velg mappefarge", FolderColors.ToHex(FolderColors.Resolve(dirs[0])));
+            if (hex != null) FolderColors.Set(dirs, hex);
+        };
+        sub.Items.Add(custom);
+        sub.Items.Add(new MenuFlyoutSeparator());
+        var reset = new MenuFlyoutItem { Text = "Tilbakestill (følg standard)", Icon = new FontIcon { Glyph = "\uE777" } };
+        reset.Click += (_, _) => FolderColors.Set(dirs, null);
+        sub.Items.Add(reset);
+        return sub;
     }
 
     string TerminalFolder(List<FileItem> sel) =>

@@ -1,6 +1,8 @@
 ; ZenFiles installer (Inno Setup). Bygges via build.bat, valg 2 -> installer\ZFSetup.exe
 #define AppName "ZenFiles"
-#define AppVersion "1.0.0"
+#ifndef AppVersion
+  #define AppVersion "0.1.0"
+#endif
 #define AppPublisher "ZenForge"
 #define AppExe "ZenFiles.exe"
 
@@ -8,6 +10,7 @@
 AppId={{6F3B2C1E-5D7A-4E1B-9C84-1A2B3C4D5E6F}
 AppName={#AppName}
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 SourceDir=..
 DefaultDirName={autopf}\{#AppName}

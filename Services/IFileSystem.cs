@@ -2,6 +2,13 @@ using ZenFiles.Models;
 
 namespace ZenFiles.Services;
 
+/// <summary>Valgfritt: filsystem som kan levere miniatyrbilder selv (f.eks. mobiler).</summary>
+public interface IThumbnailSource
+{
+    /// <summary>Miniatyrbilde som bildedata (JPEG/PNG), eller null hvis enheten ikke har noe.</summary>
+    Task<byte[]?> GetThumbnailAsync(string path);
+}
+
 /// <summary>Felles grensesnitt slik at lokale disker og SFTP-servere oppfører seg likt i UI-et.</summary>
 public interface IFileSystem
 {

@@ -11,16 +11,16 @@
                 <Path Data="M3,9 Q3,6 6,6 L15,6 Q17,6 18.3,7.6 L20,10 L34,10 Q37,10 37,13 L37,31 Q37,34 34,34 L6,34 Q3,34 3,31 Z">
                     <Path.Fill>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#FF2B86E8" Offset="0"/>
-                            <GradientStop Color="#FF1A63C8" Offset="1"/>
+                            <GradientStop x:Name="BackTop" Color="#FF2B86E8" Offset="0"/>
+                            <GradientStop x:Name="BackBottom" Color="#FF1A63C8" Offset="1"/>
                         </LinearGradientBrush>
                     </Path.Fill>
                 </Path>
                 <Path Data="M3,15 Q3,12 6,12 L34,12 Q37,12 37,15 L37,31 Q37,34 34,34 L6,34 Q3,34 3,31 Z">
                     <Path.Fill>
                         <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#FF74CCFF" Offset="0"/>
-                            <GradientStop Color="#FF35A0FF" Offset="1"/>
+                            <GradientStop x:Name="FrontTop" Color="#FF74CCFF" Offset="0"/>
+                            <GradientStop x:Name="FrontBottom" Color="#FF35A0FF" Offset="1"/>
                         </LinearGradientBrush>
                     </Path.Fill>
                 </Path>

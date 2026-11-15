@@ -43,6 +43,8 @@ public partial class App : Application
         bool fresh = argv.Contains("--new-window", StringComparer.OrdinalIgnoreCase);
 
         _dq = DispatcherQueue.GetForCurrentThread();
+        MobileDevices.Apply(_dq);
+        Themes.ApplyResources();   // tema og accent må være satt før første vindu opprettes
 
         // Kjører ZenFiles allerede, åpnes et nytt vindu der, og denne prosessen avslutter.
         if (!SingleInstance.TryBecomePrimary())

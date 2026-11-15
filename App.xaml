@@ -7,6 +7,15 @@
             <ResourceDictionary.MergedDictionaries>
                 <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" />
             </ResourceDictionary.MergedDictionaries>
+
+            <!-- Temafarger. Fargene settes fra Themes.cs; brushene byttes ikke ut, bare fargen endres, så alle vinduer oppdateres. -->
+            <SolidColorBrush x:Key="ZenSelectBrush" Color="#FF0A6CFF"/>
+            <SolidColorBrush x:Key="ZenSelectHoverBrush" Color="#FF1A78FF"/>
+            <SolidColorBrush x:Key="ZenSelectPressedBrush" Color="#FF005BE0"/>
+            <SolidColorBrush x:Key="ZenSelectSoftBrush" Color="#330A6CFF"/>
+            <SolidColorBrush x:Key="ZenSelectSoftHoverBrush" Color="#440A6CFF"/>
+            <SolidColorBrush x:Key="ZenIconBrush" Color="#FF3D9BFF"/>
+            <SolidColorBrush x:Key="ZenPanelBrush" Color="#4C3A3A3A"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

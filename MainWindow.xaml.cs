@@ -18,7 +18,7 @@ namespace ZenFiles;
 public sealed partial class MainWindow : Window
 {
     readonly List<ConnectionProfile> _profiles = ConnectionStore.Load();
-    readonly ObservableCollection<SidebarEntry> _quick = new(), _drives = new(), _ssh = new();
+    readonly ObservableCollection<SidebarEntry> _quick = new(), _drives = new(), _ssh = new(), _phones = new();
 
     static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
@@ -34,6 +34,138 @@ public sealed partial class MainWindow : Window
     bool _maximized;
     MainWindow? _tearOutWindow;
 
+    /// <summary>Tar i bruk valgt tema i dette vinduet: lys/mørk, bakgrunn (Mica eller solid) og vindusknapper.</summary>
+    public void ApplyTheme()
+    {
+        var t = Themes.Current;
+
+        // Bytt via motsatt tema først, så alle {ThemeResource}-farger (også accent) regnes ut på nytt.
+        Root.RequestedTheme = t.Base == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark;
+        Root.RequestedTheme = t.Base;
+
+        if (t.Background == null)
+        {
+            SystemBackdrop = new MicaBackdrop();
+            Root.Background = null;
+        }
+        else
+        {
+            SystemBackdrop = null;
+            Root.Background = new SolidColorBrush(FolderColors.Parse(t.Background));
+        }
+
+        try
+        {
+            var tb = AppWindow.TitleBar;
+            if (t.Background == null)
+            {
+                tb.ButtonBackgroundColor = null; tb.ButtonInactiveBackgroundColor = null;
+                tb.ButtonForegroundColor = null; tb.ButtonInactiveForegroundColor = null;
+                tb.ButtonHoverBackgroundColor = null; tb.ButtonHoverForegroundColor = null;
+                tb.ButtonPressedBackgroundColor = null; tb.ButtonPressedForegroundColor = null;
+            }
+            else
+            {
+                var fg = Themes.CaptionForeground(t);
+                tb.ButtonBackgroundColor = Microsoft.UI.Colors.Transparent;
+                tb.ButtonInactiveBackgroundColor = Microsoft.UI.Colors.Transparent;
+                tb.ButtonForegroundColor = fg;
+                tb.ButtonInactiveForegroundColor = Windows.UI.Color.FromArgb(160, fg.R, fg.G, fg.B);
+                tb.ButtonHoverBackgroundColor = Windows.UI.Color.FromArgb(0x22, fg.R, fg.G, fg.B);
+                tb.ButtonHoverForegroundColor = fg;
+                tb.ButtonPressedBackgroundColor = Windows.UI.Color.FromArgb(0x33, fg.R, fg.G, fg.B);
+                tb.ButtonPressedForegroundColor = fg;
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>Velger for tema i innstillinger.</summary>
+    StackPanel BuildMobileSetting()
+    {
+        var box = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
+        var sw = new ToggleSwitch
+        {
+            Header = "Mobile Devices",
+            OnContent = "På", OffContent = "Av",
+            IsOn = AppSettings.MobileDevices
+        };
+        sw.Toggled += (_, _) =>
+        {
+            AppSettings.MobileDevices = sw.IsOn;
+            MobileDevices.Apply(Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+            foreach (var w in App.Windows) w.RefreshPhones();
+        };
+        box.Children.Add(sw);
+        box.Children.Add(new TextBlock
+        {
+            Text = "Viser mobiler og nettbrett koblet til med USB under «Enheter». Android: lås opp og velg «Filoverføring». " +
+                   "iPhone: kun kamerarulle (DCIM), og krever Apple-driver (Apple Devices fra Microsoft Store).",
+            FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
+        });
+        return box;
+    }
+
+    StackPanel BuildThemeSetting()
+    {
+        var box = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
+        box.Children.Add(new TextBlock { Text = "Tema", FontSize = 14 });
+        var cb = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        foreach (var t in Themes.All) cb.Items.Add(t.Name);
+        cb.SelectedIndex = Math.Max(0, Array.FindIndex(Themes.All, x => x.Id == Themes.Current.Id));
+        cb.SelectionChanged += (_, _) =>
+        {
+            if (cb.SelectedIndex >= 0 && Themes.All[cb.SelectedIndex].Id != Themes.Current.Id)
+                Themes.SetCurrent(Themes.All[cb.SelectedIndex].Id);
+        };
+        box.Children.Add(cb);
+        box.Children.Add(new TextBlock
+        {
+            Text = "Endrer farger i hele appen. AMOLED svart bruker ren svart bakgrunn.",
+            FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
+        });
+        return box;
+    }
+
+    /// <summary>Rad i innstillinger der man velger standard mappefarge (gjelder alle mapper uten egen farge).</summary>
+    StackPanel BuildFolderColorSetting()
+    {
+        var box = new StackPanel { Spacing = 6, Margin = new Thickness(0, 10, 0, 0) };
+        box.Children.Add(new TextBlock { Text = "Mappefarge", FontSize = 14 });
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        var buttons = new List<(Button b, string hex)>();
+
+        void Mark()
+        {
+            var cur = AppSettings.FolderColor.Length > 0 ? AppSettings.FolderColor : FolderColors.DefaultHex;
+            foreach (var (b, hex) in buttons)
+                b.BorderBrush = new SolidColorBrush(hex.Equals(cur, StringComparison.OrdinalIgnoreCase)
+                    ? Microsoft.UI.Colors.White : Microsoft.UI.Colors.Transparent);
+        }
+
+        foreach (var sw in FolderColors.Swatches)
+        {
+            var hex = sw.Hex;
+            var b = new Button
+            {
+                Width = 22, Height = 22, Padding = new Thickness(0), CornerRadius = new CornerRadius(11),
+                Background = new SolidColorBrush(FolderColors.Parse(hex)), BorderThickness = new Thickness(2)
+            };
+            ToolTipService.SetToolTip(b, sw.Name);
+            b.Click += (_, _) => { FolderColors.SetGlobal(hex); Mark(); };
+            buttons.Add((b, hex));
+            row.Children.Add(b);
+        }
+        Mark();
+        box.Children.Add(row);
+        box.Children.Add(new TextBlock
+        {
+            Text = "Gjelder alle mapper. Du kan gi enkeltmapper egen farge med høyreklikk → Mappefarge.",
+            FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
+        });
+        return box;
+    }
+
     /// <param name="startPath">Mappen første fane åpner i.</param>
     /// <param name="session">Gjenopprett faner og plassering fra en lagret økt.</param>
     /// <param name="empty">Tomt vindu som skal motta en fane som flyttes hit.</param>
@@ -44,13 +176,16 @@ public sealed partial class MainWindow : Window
         try { AppWindow.SetIcon(System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "ZenFiles.ico")); } catch { }
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(DragArea);
-        SystemBackdrop = new MicaBackdrop();
+        ApplyTheme();
         Root.KeyboardAcceleratorPlacementMode = KeyboardAcceleratorPlacementMode.Hidden;   // ingen «Ctrl+T»-tooltips
         AppWindow.Resize(new SizeInt32(1440, 880));
 
         QuickList.ItemsSource = _quick;
         DriveList.ItemsSource = _drives;
         SshList.ItemsSource = _ssh;
+        PhoneList.ItemsSource = _phones;
+        MobileDevices.Changed += OnPhonesChanged;
+        RefreshPhones();
         _quick.CollectionChanged += (_, _) => { if (!_loadingFav) SaveFavorites(); };
         BuildSidebar();
 
@@ -103,6 +238,17 @@ public sealed partial class MainWindow : Window
                    "neste gang du starter ZenFiles. SFTP- og terminalfaner gjenopprettes ikke.",
             FontSize = 12, Opacity = 0.6, TextWrapping = TextWrapping.Wrap
         });
+        panel.Children.Add(BuildMobileSetting());
+        panel.Children.Add(BuildThemeSetting());
+        panel.Children.Add(BuildFolderColorSetting());
+        var ver = System.Reflection.Assembly.GetExecutingAssembly()
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>().FirstOrDefault()?.InformationalVersion ?? "";
+        ver = ver.Split('+')[0];   // fjern git-hash e.l. etter «+»
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"ZenFiles {ver}", FontSize = 12, Opacity = 0.5, Margin = new Thickness(0, 12, 0, 0)
+        });
         SettingsBtn.Flyout = new Flyout { Content = panel };
 
         App.Windows.Add(this);
@@ -141,6 +287,7 @@ public sealed partial class MainWindow : Window
         App.SaveSessionNow();
         App.Windows.Remove(this);
 
+        MobileDevices.Changed -= OnPhonesChanged;
         foreach (var t in Tabs.TabItems.OfType<TabViewItem>().ToList())
         {
             (t.Tag as Action)?.Invoke();
@@ -289,6 +436,43 @@ public sealed partial class MainWindow : Window
         }
 
         RefreshSsh();
+    }
+
+    void OnPhonesChanged() => RefreshPhones();
+
+    public void RefreshPhones()
+    {
+        _phones.Clear();
+        foreach (var d in MobileDevices.Devices)
+            _phones.Add(new SidebarEntry
+            {
+                Label = d.Name,
+                Glyph = d.Kind == "Apple" ? "\uE8EA" : "\uE8EA",
+                Sub = d.Kind == "Apple" ? "iPhone/iPad (USB)" : "Android (USB)",
+                DeviceId = d.Id
+            });
+        PhoneSection.Visibility = MobileDevices.Enabled && _phones.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    async void Phone_ItemClick(object s, ItemClickEventArgs e)
+    {
+        if (((SidebarEntry)e.ClickedItem).DeviceId is { } id) await OpenPhoneAsync(id);
+    }
+
+    async Task OpenPhoneAsync(string deviceId)
+    {
+        try
+        {
+            var fs = await MobileDevices.OpenAsync(deviceId);
+            var et = new ExplorerTab(fs, "/");
+            var item = AddTab(et, fs.DeviceName, "\uE8EA");
+            HookExplorer(item, et);
+        }
+        catch (Exception ex)
+        {
+            await Dialogs.ErrorAsync(Root.XamlRoot, "Kunne ikke åpne enheten",
+                ex.Message + "\n\nLås opp telefonen og velg «Filoverføring» (Android) eller trykk «Stol på denne datamaskinen» (iPhone).");
+        }
     }
 
     void RefreshSsh()
@@ -521,6 +705,7 @@ public sealed partial class MainWindow : Window
 
     void OnTerminalRequested(IFileSystem fs, string path)
     {
+        if (fs is PhoneFileSystem) return;   // ingen terminal på mobil
         if (fs is SftpFileSystem sftp)
             OpenTerminalTab(ShellCommands.Ssh(sftp.Profile, path), sftp.Profile.Name);
         else
@@ -622,7 +807,7 @@ public sealed partial class MainWindow : Window
 
         // Lokale mapper i sidepanelet er slippmål: dra filer hit for å flytte eller kopiere dem dit
         var c = args.ItemContainer;
-        c.AllowDrop = args.Item is SidebarEntry { Profile: null };
+        c.AllowDrop = args.Item is SidebarEntry { Profile: null, DeviceId: null };
         if (c.Tag is not "sd")
         {
             c.Tag = "sd"; c.DragOver += SideEntry_DragOver; c.Drop += SideEntry_Drop;
