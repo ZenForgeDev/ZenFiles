@@ -43,6 +43,7 @@ public partial class App : Application
         bool fresh = argv.Contains("--new-window", StringComparer.OrdinalIgnoreCase);
 
         _dq = DispatcherQueue.GetForCurrentThread();
+        Diag.Start();
         MobileDevices.Apply(_dq);
         UpdateChecker.StartBackground(_dq);
         Themes.ApplyResources();   // tema og accent må være satt før første vindu opprettes

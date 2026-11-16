@@ -225,12 +225,25 @@ public sealed partial class ExplorerPane : UserControl
         _thumbCts?.Cancel();
         if (IsPreviewOpen) ClosePreview();
         SetBusy("Laster…");
+        var sw = Stopwatch.StartNew();
         try
         {
             var list = await Fs.ListAsync(path, _showHidden);
+            Diag.Log($"nav '{path}' n={list.Count} {sw.ElapsedMilliseconds}ms filter='{SearchBox.Text}' search={_searchMode} hidden={_showHidden} {Diag.Env()}");
+            if (list.Count == 0 && !Fs.IsRemote)
+            {
+                // Tom liste: sjekk uavhengig om mappen faktisk har innhold, så loggen viser om listingen var feil
+                try
+                {
+                    bool has = path.Length == 0 ? DriveInfo.GetDrives().Length > 0 : Directory.EnumerateFileSystemEntries(path).Any();
+                    Diag.Log($"  tom liste, men finnes innhold? {has}");
+                }
+                catch (Exception ex2) { Diag.Log("  kontrollsjekk feilet: " + ex2.GetType().Name + " " + ex2.Message); }
+            }
             if (push && _loaded) { _back.Push(CurrentPath); _fwd.Clear(); }
             _loaded = true;
             if (_searchMode) { EndSearchState(); SearchBox.Text = ""; }
+            else if (path != CurrentPath && SearchBox.Text.Length > 0) SearchBox.Text = "";   // filteret gjelder bare mappen det ble skrevet i
             CurrentPath = path;
             _all = list;
             Title = ComputeTitle();
@@ -244,6 +257,7 @@ public sealed partial class ExplorerPane : UserControl
         }
         catch (Exception ex)
         {
+            Diag.Log($"nav FEIL '{path}' {ex.GetType().Name}: {ex.Message} {Diag.Env()}");
             Status.Text = ex.Message;
             if (XamlRoot != null) await Dialogs.ErrorAsync(XamlRoot, "Kan ikke åpne mappen", ex.Message);
         }
@@ -601,6 +615,8 @@ public sealed partial class ExplorerPane : UserControl
         _items = new ObservableCollection<FileItem>(sorted);
         DetailsList.ItemsSource = _items;
         GridList.ItemsSource = _items;
+        if (_all.Count > 0 && sorted.Count == 0)
+            Diag.Log($"apply: alt filtrert bort (all={_all.Count}) filter='{SearchBox.Text}' search={_searchMode}");
         UpdateHeaders();
         UpdateStatus();
         if (_grid) _ = LoadThumbnailsAsync(sorted);
@@ -626,6 +642,7 @@ public sealed partial class ExplorerPane : UserControl
             return;
         }
         var text = sel.Count == 0 ? $"{_items.Count} elementer" : $"{sel.Count} av {_items.Count} valgt";
+        if (!string.IsNullOrWhiteSpace(SearchBox.Text)) text += $" · filtrert på «{SearchBox.Text.Trim()}» (Esc fjerner)";
         if (sel.Count > 0 && sel.All(i => !i.IsDirectory)) text += $" ({FileItem.Format(sel.Sum(i => i.Size))})";
 
         if (!Fs.IsRemote && CurrentPath.Length > 0)
@@ -1122,6 +1139,7 @@ public sealed partial class ExplorerPane : UserControl
             }
             if (path != CurrentPath || _searchMode) return;
             if (SameListing(_all, list)) return;
+            if (list.Count == 0 && _all.Count > 0) Diag.Log($"silent: tom liste for '{path}' (var {_all.Count}) {Diag.Env()}");
 
             var old = new Dictionary<string, FileItem>(StringComparer.OrdinalIgnoreCase);
             foreach (var o in _all) old.TryAdd(o.FullPath, o);
