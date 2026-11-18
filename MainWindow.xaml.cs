@@ -692,6 +692,11 @@ public sealed partial class MainWindow : Window
         else NewExplorerTab(path);
     }
 
+    void SideTitle_PointerPressed(object s, PointerRoutedEventArgs e) => WindowMove.OnPressed(this, e, (UIElement)s);
+    void SideTitle_PointerMoved(object s, PointerRoutedEventArgs e) => WindowMove.OnMoved(this, e, (UIElement)s);
+    void SideTitle_PointerReleased(object s, PointerRoutedEventArgs e) => WindowMove.OnReleased(e, (UIElement)s);
+    void SideTitle_CaptureLost(object s, PointerRoutedEventArgs e) => WindowMove.OnCaptureLost();
+
     async void Ssh_ItemClick(object s, ItemClickEventArgs e)
     {
         var profile = ((SidebarEntry)e.ClickedItem).Profile;

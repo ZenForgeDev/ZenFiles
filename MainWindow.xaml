@@ -50,8 +50,12 @@
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <TextBlock Text="ZenFiles" FontWeight="SemiBold" FontSize="13" Opacity="0.7"
-                       VerticalAlignment="Center" Margin="10,0,0,0"/>
+            <!-- Navnet fungerer som tittellinje: dra for å flytte vinduet, dobbeltklikk for å maksimere -->
+            <Grid x:Name="SideTitle" Background="Transparent" Margin="-10,0,-8,0" PointerPressed="SideTitle_PointerPressed" PointerMoved="SideTitle_PointerMoved"
+                  PointerReleased="SideTitle_PointerReleased" PointerCanceled="SideTitle_PointerReleased" PointerCaptureLost="SideTitle_CaptureLost">
+                <TextBlock Text="ZenFiles" FontWeight="SemiBold" FontSize="13" Opacity="0.7"
+                           VerticalAlignment="Center" Margin="20,0,0,0" IsHitTestVisible="False"/>
+            </Grid>
 
             <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                 <StackPanel>
