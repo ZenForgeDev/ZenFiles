@@ -15,6 +15,24 @@ public partial class App : Application
     public App()
     {
         InitializeComponent();
+        // Krasjlogging til diag.log, slik at en feil som får appen til å lukke seg etterlater et spor.
+        UnhandledException += (_, e) =>
+        {
+            Diag.Log($"KRASJ (XAML): hresult=0x{e.Exception.HResult:X8} melding='{e.Message}'\n--- unntakets stakk:\n{e.Exception.StackTrace}\n--- stakk i behandleren:\n{Environment.StackTrace}");
+            // «Feil parameter» (E_INVALIDARG) fra XAML er som regel en feil i utseende/layout, ikke noe som ødelegger data:
+            // la appen fortsette i stedet for å lukkes, så loggen kan fortelle hvor det skjedde.
+            if (e.Exception is ArgumentException || e.Exception.HResult == unchecked((int)0x80070057)) e.Handled = true;
+        };
+        // Alle .NET-unntak som kastes (også de som fanges), med stakk, de første 40. Viser hvor «Feil parameter» oppstår.
+        int firstChance = 0;
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) =>
+        {
+            if (e.Exception is not (ArgumentException or System.Runtime.InteropServices.COMException or InvalidOperationException)) return;
+            if (Interlocked.Increment(ref firstChance) > 40) return;
+            Diag.Log($"unntak kastet: {e.Exception.GetType().Name} 0x{e.Exception.HResult:X8} {e.Exception.Message.Trim()}\n{new System.Diagnostics.StackTrace(1, true)}");
+        };
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Diag.Log($"KRASJ (.NET, avslutter={e.IsTerminating}): {e.ExceptionObject}");
+        TaskScheduler.UnobservedTaskException += (_, e) => Diag.Log($"Ubehandlet oppgavefeil: {e.Exception}");
     }
 
     protected override void OnLaunched(LaunchActivatedEventArgs args)

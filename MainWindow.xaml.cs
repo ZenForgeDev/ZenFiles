@@ -22,7 +22,8 @@ public sealed partial class MainWindow : Window
 
     static string Home => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-    bool _initSwitch, _syncing, _loadingFav;
+    bool _initSwitch, _syncing, _loadingFav, _syncPending, _sidebarReady;
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _syncTimer;
     readonly ToggleSwitch _defaultSwitch = new()
     {
         Header = "Standard filbehandler",
@@ -301,11 +302,14 @@ public sealed partial class MainWindow : Window
         {
             // Festede mapper åpnes bare i det første vinduet (ikke i vinduer som åpnes senere).
             var pins = App.Windows.Count == 1 ? AppSettings.PinnedTabs.Where(Directory.Exists).ToList() : new List<string>();
+            Diag.Log($"oppstart: festede mapper = {string.Join(" | ", pins)}; startPath='{startPath}'");
             foreach (var p in pins) NewExplorerTab(p, pinned: true, save: false);
+            Diag.Log($"oppstart: festede faner opprettet ({Tabs.TabItems.Count})");
             if (pins.Count == 0 || !string.IsNullOrEmpty(startPath))
                 NewExplorerTab(string.IsNullOrEmpty(startPath) ? Home : startPath);
             else if (Tabs.TabItems.Count > 0)
                 Tabs.SelectedItem = Tabs.TabItems[0];
+            Diag.Log("oppstart: vindu ferdig satt opp");
         }
         App.RequestSessionSave();
     }
@@ -391,6 +395,7 @@ public sealed partial class MainWindow : Window
         App.SaveSessionNow();
         App.Windows.Remove(this);
 
+        _driveTimer?.Stop();
         MobileDevices.Changed -= OnPhonesChanged;
         UpdateChecker.Changed -= RefreshUpdateCard;
         foreach (var t in Tabs.TabItems.OfType<TabViewItem>().ToList())
@@ -531,20 +536,71 @@ public sealed partial class MainWindow : Window
         _loadingFav = false;
 
         _drives.Clear();
-        foreach (var d in DriveInfo.GetDrives())
-        {
-            if (!d.IsReady) continue;
-            var label = string.IsNullOrEmpty(d.VolumeLabel) ? "Lokal disk" : d.VolumeLabel;
-            _drives.Add(new SidebarEntry
-            {
-                Label = $"{label} ({d.Name.TrimEnd('\\')})",
-                Glyph = "",
-                Path = d.Name,
-                Sub = $"{FileItem.Format(d.TotalFreeSpace)} ledig av {FileItem.Format(d.TotalSize)}"
-            });
-        }
+        foreach (var e in ReadDrives()) _drives.Add(e);
+        StartDriveWatch();
 
         RefreshSsh();
+    }
+
+    // ───────── Stasjoner som kommer og går ─────────
+
+    static List<SidebarEntry> ReadDrives()
+    {
+        var list = new List<SidebarEntry>();
+        try
+        {
+            foreach (var d in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (!d.IsReady) continue;
+                    var label = string.IsNullOrEmpty(d.VolumeLabel) ? "Lokal disk" : d.VolumeLabel;
+                    list.Add(new SidebarEntry
+                    {
+                        Label = $"{label} ({d.Name.TrimEnd('\\')})",
+                        Glyph = "\uEDA2",
+                        Path = d.Name,
+                        Sub = $"{FileItem.Format(d.TotalFreeSpace)} ledig av {FileItem.Format(d.TotalSize)}"
+                    });
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return list;
+    }
+
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? _driveTimer;
+    string _driveSig = "";
+    bool _driveBusy;
+
+    /// <summary>Sjekker stasjonene hvert tredje sekund og oppdaterer «Steder» når en USB-penn eller et minnekort kommer eller går.</summary>
+    void StartDriveWatch()
+    {
+        _driveSig = string.Join("|", _drives.Select(x => x.Label + x.Path));
+        if (_driveTimer != null) return;
+        _driveTimer = DispatcherQueue.CreateTimer();
+        _driveTimer.Interval = TimeSpan.FromSeconds(3);
+        _driveTimer.IsRepeating = true;
+        _driveTimer.Tick += async (_, _) =>
+        {
+            if (_driveBusy) return;
+            _driveBusy = true;
+            try
+            {
+                var fresh = await Task.Run(ReadDrives);   // av og til tregt (frakoblet nettverksstasjon), derfor ikke på UI-tråden
+                var sig = string.Join("|", fresh.Select(x => x.Label + x.Path));
+                if (sig == _driveSig) return;
+                _driveSig = sig;
+                Diag.Log("stasjoner endret: " + sig);
+                _drives.Clear();
+                foreach (var e in fresh) _drives.Add(e);
+                if (_sidebarReady) SyncSidebar();
+            }
+            catch (Exception ex) { Diag.Log("stasjonsoppdatering feilet: " + ex.Message); }
+            finally { _driveBusy = false; }
+        };
+        _driveTimer.Start();
     }
 
     void OnPhonesChanged() => RefreshPhones();
@@ -777,15 +833,17 @@ public sealed partial class MainWindow : Window
 
     static string TitleOf(TabViewItem t) =>
         t.Content is ExplorerTab et && !string.IsNullOrEmpty(et.Active.Title) ? et.Active.Title
-        : t.Header as string is { Length: > 0 } h ? h : "Fane";
+        : t.Header as string is { Length: > 0 } h && h != "\u200B" ? h : "Fane";
 
     /// <summary>Festede faner vises smale med bare ikon (navnet står i verktøytipset); vanlige faner får navn og lukkeknapp.</summary>
     static void ApplyTabLook(TabViewItem t)
     {
         if (IsPinned(t))
         {
+            // En TOM tittel (Header = "") på en festet fane gir «Feil parameter» fra XAML og krasj ved oppstart når fanen er valgt.
+            // Derfor brukes et usynlig tegn (nullbreddes mellomrom): tittelen er ikke tom, men vises ikke, så fanen viser bare ikonet.
             var title = TitleOf(t);
-            t.Header = "";
+            t.Header = "\u200B";
             ToolTipService.SetToolTip(t, title);
             t.IsClosable = false;
             t.MinWidth = 0;
@@ -793,7 +851,7 @@ public sealed partial class MainWindow : Window
         }
         else
         {
-            if (t.Header is string { Length: 0 }) t.Header = TitleOf(t);
+            if (t.Header is not string hs || hs.Length == 0 || hs == "\u200B") t.Header = TitleOf(t);
             ToolTipService.SetToolTip(t, null);
             t.IsClosable = true;
             t.MinWidth = 120;
@@ -1005,14 +1063,22 @@ public sealed partial class MainWindow : Window
 
     void OnLocationChanged(ExplorerTab et, TabViewItem item, ExplorerPane pane)
     {
-        if (pane == et.Active && !string.IsNullOrEmpty(pane.Title))
+        // Hvert trinn er skjermet: en feil her (f.eks. i uthevingen i sidepanelet) skal aldri få appen til å lukke seg.
+        try
         {
-            if (IsPinned(item)) ToolTipService.SetToolTip(item, pane.Title);
-            else item.Header = pane.Title;
+            if (pane == et.Active && !string.IsNullOrEmpty(pane.Title))
+            {
+                if (IsPinned(item)) ToolTipService.SetToolTip(item, pane.Title);
+                else item.Header = pane.Title;
+            }
         }
-        if (IsPinned(item)) SavePins();
-        SyncSidebar();
-        App.RequestSessionSave();
+        catch (Exception ex) { Diag.Log("OnLocationChanged/fane-tittel feilet: " + ex); }
+        try { if (IsPinned(item)) SavePins(); }
+        catch (Exception ex) { Diag.Log("OnLocationChanged/SavePins feilet: " + ex); }
+        try { SyncSidebar(); }
+        catch (Exception ex) { Diag.Log($"OnLocationChanged/SyncSidebar feilet (sti '{pane.CurrentPath}'): " + ex); }
+        try { App.RequestSessionSave(); }
+        catch (Exception ex) { Diag.Log("OnLocationChanged/RequestSessionSave feilet: " + ex); }
     }
 
     void Tabs_SelectionChanged(object s, SelectionChangedEventArgs e)
@@ -1024,6 +1090,23 @@ public sealed partial class MainWindow : Window
     /// <summary>Utheving i sidepanelet følger den aktive rutens mappe.</summary>
     void SyncSidebar()
     {
+        // Under oppstart tåler ikke favorittlisten at et element velges (XAML svarer «Feil parameter» selv om elementet finnes i listen
+        // og listen er lastet), og feilen kan ta med seg hele appen. Markeringen er bare utseende, så den utsettes til listene har
+        // fått tegnet seg ferdig.
+        if (!_sidebarReady)
+        {
+            if (!_syncPending)
+            {
+                _syncPending = true;
+                _syncTimer = DispatcherQueue.CreateTimer();
+                _syncTimer.Interval = TimeSpan.FromMilliseconds(800);
+                _syncTimer.IsRepeating = false;
+                _syncTimer.Tick += (_, _) => { _sidebarReady = true; _syncPending = false; SyncSidebar(); };
+                _syncTimer.Start();
+            }
+            return;
+        }
+
         var pane = CurrentExplorer?.Active;
         string? path = pane != null && !pane.Fs.IsRemote ? pane.CurrentPath.TrimEnd('\\') : null;
 
@@ -1034,9 +1117,13 @@ public sealed partial class MainWindow : Window
         try
         {
             var q = Find(_quick);
-            QuickList.SelectedItem = q;
-            DriveList.SelectedItem = q == null ? Find(_drives) : null;
+            if (q != null && !QuickList.Items.Contains(q)) q = null;   // listen har ikke tatt imot elementene ennå
+            var d = q == null ? Find(_drives) : null;
+            if (d != null && !DriveList.Items.Contains(d)) d = null;
+            if (!ReferenceEquals(QuickList.SelectedItem, q)) QuickList.SelectedItem = q;
+            if (!ReferenceEquals(DriveList.SelectedItem, d)) DriveList.SelectedItem = d;
         }
+        catch (Exception ex) { Diag.Log($"SyncSidebar feilet (sti '{path}'): " + ex); }
         finally { _syncing = false; }
     }
 

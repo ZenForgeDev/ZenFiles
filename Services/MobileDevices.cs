@@ -70,6 +70,18 @@ public static class MobileDevices
             var res = new List<PhoneInfo>();
             var devices = MediaDeviceManager.Instance.GetDevices();
             if (devices == null) return res;
+            var cnt = devices.Count();
+            if (cnt != _lastRaw) { _lastRaw = cnt; Diag.Log($"enheter: Windows rapporterer {cnt} bærbare enheter"); }
+            // Volumnavn på lokale stasjoner (D:, E: …) – USB-pinner dukker opp både som stasjon og som «enhet».
+            var volumeLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                foreach (var di in DriveInfo.GetDrives())
+                {
+                    try { if (di.IsReady && !string.IsNullOrWhiteSpace(di.VolumeLabel)) volumeLabels.Add(di.VolumeLabel); } catch { }
+                }
+            }
+            catch { }
             foreach (var d in devices)
             {
                 var name = !string.IsNullOrWhiteSpace(d.FriendlyName) ? d.FriendlyName!
@@ -77,11 +89,37 @@ public static class MobileDevices
                 var apple = (d.Manufacturer ?? "").Contains("Apple", StringComparison.OrdinalIgnoreCase)
                             || name.Contains("iPhone", StringComparison.OrdinalIgnoreCase)
                             || name.Contains("iPad", StringComparison.OrdinalIgnoreCase);
+                if (IsMassStorage(d.DeviceId, name, volumeLabels))
+                {
+                    if (_logged.Add(d.DeviceId)) Diag.Log($"enheter: hopper over lagringsstasjon «{name}» id={d.DeviceId}");
+                    continue;
+                }
+                if (_logged.Add(d.DeviceId)) Diag.Log($"enheter: viser «{name}» ({(apple ? "Apple" : "Android")}) id={d.DeviceId} produsent={d.Manufacturer}");
                 res.Add(new PhoneInfo(d.DeviceId, name, apple ? "Apple" : "Android"));
             }
             return res;
         }
         catch { return null; }
+    }
+
+    static readonly HashSet<string> _logged = new();
+    static int _lastRaw = -1;
+
+    /// <summary>
+    /// USB-pinner og minnekort (masselagring) har ingenting med mobiler å gjøre, men Windows lister dem også som
+    /// bærbare enheter. Mobiler bruker MTP/PTP (id med «usb#vid_» og WPD-klassen), mens masselagring har «STORAGE#Volume»
+    /// eller «USBSTOR» i id-en. Som ekstra sikring skjules enheter hvis navn er lik volumnavnet på en lokal stasjon.
+    /// </summary>
+    static bool IsMassStorage(string id, string name, HashSet<string> volumeLabels)
+    {
+        var s = id ?? "";
+        if (s.Contains("STORAGE#Volume", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("USBSTOR", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("SCSI#Disk", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("{53f56307-b6bf-11d0-94f2-00a0c91efb8b}", StringComparison.OrdinalIgnoreCase)
+            || s.Contains("{53f5630d-b6bf-11d0-94f2-00a0c91efb8b}", StringComparison.OrdinalIgnoreCase))
+            return true;
+        return volumeLabels.Contains(name);
     }
 
     /// <summary>Kobler til enheten og gir et filsystem. Kaster med en forståelig melding hvis det feiler.</summary>
