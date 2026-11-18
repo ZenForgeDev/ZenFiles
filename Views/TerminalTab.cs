@@ -39,8 +39,39 @@ public sealed class TerminalTab : Grid, IDisposable
         _timer.Tick += (_, _) => Verify();
         LayoutUpdated += (_, _) => Compensate();
         SizeChanged += (_, _) => Compensate();
-        Loaded += (_, _) => { _timer.Start(); Compensate(); Log("Loaded"); };
-        Unloaded += (_, _) => { _timer.Stop(); Log("Unloaded"); };
+        Loaded += (_, _) => { _timer.Start(); Compensate(); Log("Loaded"); Dialogs.OpenChanged += OnDialogs; OnDialogs(); };
+        Unloaded += (_, _) => { _timer.Stop(); Dialogs.OpenChanged -= OnDialogs; Log("Unloaded"); };
+    }
+
+    void OnDialogsQuiet()
+    {
+        try
+        {
+            _container ??= Find(_term, "TerminalContainer");
+            if (_container == null) return;
+            var h = ToPtr(_container.GetType().GetProperty("Handle")?.GetValue(_container));
+            if (h != IntPtr.Zero && IsWindowVisible(h)) { ShowWindow(h, 0); Log("holdt skjult under dialog"); }
+        }
+        catch { }
+    }
+
+    /// <summary>Skjuler terminalvinduet mens en dialog er åpen, ellers havner dialogen bak det og appen ser låst ut.</summary>
+    void OnDialogs()
+    {
+        try
+        {
+            bool hide = Dialogs.Open > 0;
+            _canvas.Visibility = hide ? Visibility.Collapsed : Visibility.Visible;
+            _container ??= Find(_term, "TerminalContainer");
+            if (_container != null)
+            {
+                var h = ToPtr(_container.GetType().GetProperty("Handle")?.GetValue(_container));
+                if (h != IntPtr.Zero) ShowWindow(h, hide ? 0 : 5);   // SW_HIDE / SW_SHOW
+            }
+            if (hide) SetFocus(_mainHwnd);   // tastetrykk skal til dialogen, ikke til terminalen
+            Log(hide ? "skjult for dialog" : "vist igjen etter dialog");
+        }
+        catch (Exception ex) { Log("OnDialogs feilet: " + ex.GetType().Name + " " + ex.Message); }
     }
 
     public void Dispose()
@@ -76,6 +107,7 @@ public sealed class TerminalTab : Grid, IDisposable
     {
         try
         {
+            if (Dialogs.Open > 0) { OnDialogsQuiet(); return; }   // pakken kan vise vinduet igjen av seg selv; hold det skjult
             if (XamlRoot?.Content is not UIElement root || ActualWidth < 1 || ActualHeight < 1) { State("ikke klar"); return; }
             _container ??= Find(_term, "TerminalContainer");
             if (_container == null) { State("fant ikke TerminalContainer"); return; }
@@ -157,6 +189,8 @@ public sealed class TerminalTab : Grid, IDisposable
 
     const uint SWP_NOSIZE = 0x0001, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
 
+    [DllImport("user32.dll")] static extern IntPtr SetFocus(IntPtr hWnd);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hWnd);
     [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr hWnd, ref POINT p);

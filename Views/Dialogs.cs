@@ -8,6 +8,17 @@ namespace ZenFiles.Views;
 
 public static class Dialogs
 {
+    /// <summary>Antall åpne dialoger. Terminalvinduet (eget Win32-vindu) legger seg over XAML og skjuler dialoger, så det skjules mens en dialog er åpen.</summary>
+    public static int Open { get; private set; }
+    public static event Action? OpenChanged;
+
+    public static async Task<ContentDialogResult> Show(ContentDialog d)
+    {
+        Open++; OpenChanged?.Invoke();
+        try { return await d.ShowAsync(); }
+        finally { Open--; OpenChanged?.Invoke(); }
+    }
+
     /// <summary>ContentDialog arver ikke vinduets tema av seg selv; vi sender det med.</summary>
     public static ElementTheme ThemeOf(XamlRoot root) =>
         root.Content is FrameworkElement fe ? fe.RequestedTheme : ElementTheme.Default;
@@ -21,7 +32,7 @@ public static class Dialogs
             XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = box,
             PrimaryButtonText = primary, CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary
         };
-        return await d.ShowAsync() == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(box.Text)
+        return await Dialogs.Show(d) == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(box.Text)
             ? box.Text.Trim() : null;
     }
 
@@ -34,7 +45,7 @@ public static class Dialogs
             XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = box,
             PrimaryButtonText = "Koble til", CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary
         };
-        return await d.ShowAsync() == ContentDialogResult.Primary ? box.Password : null;
+        return await Dialogs.Show(d) == ContentDialogResult.Primary ? box.Password : null;
     }
 
     public static async Task<bool> ConfirmAsync(XamlRoot root, string title, string message, string primary)
@@ -44,7 +55,7 @@ public static class Dialogs
             XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = primary, CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Close
         };
-        return await d.ShowAsync() == ContentDialogResult.Primary;
+        return await Dialogs.Show(d) == ContentDialogResult.Primary;
     }
 
     /// <summary>Fargevelger. Returnerer #RRGGBB eller null hvis brukeren avbryter.</summary>
@@ -63,7 +74,7 @@ public static class Dialogs
             XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = picker,
             PrimaryButtonText = "Bruk", CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary
         };
-        return await d.ShowAsync() == ContentDialogResult.Primary ? FolderColors.ToHex(picker.Color) : null;
+        return await Dialogs.Show(d) == ContentDialogResult.Primary ? FolderColors.ToHex(picker.Color) : null;
     }
 
     public static async Task ErrorAsync(XamlRoot root, string title, string message)
@@ -73,7 +84,7 @@ public static class Dialogs
             XamlRoot = root, RequestedTheme = ThemeOf(root), Title = title, Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true },
             CloseButtonText = "OK"
         };
-        await d.ShowAsync();
+        await Dialogs.Show(d);
     }
 }
 
@@ -122,7 +133,17 @@ public static class ConnectionDialog
             PrimaryButtonText = "Lagre", CloseButtonText = "Avbryt", DefaultButton = ContentDialogButton.Primary
         };
 
-        if (await d.ShowAsync() != ContentDialogResult.Primary) return null;
+        d.PrimaryButtonClick += (_, a) =>
+        {
+            if (useKey.IsOn && string.IsNullOrWhiteSpace(key.Text))
+            {
+                a.Cancel = true;
+                key.Header = "Sti til privatnøkkel – må fylles ut (eller bytt til Passord)";
+                key.Focus(FocusState.Programmatic);
+            }
+        };
+
+        if (await Dialogs.Show(d) != ContentDialogResult.Primary) return null;
         if (string.IsNullOrWhiteSpace(host.Text) || string.IsNullOrWhiteSpace(user.Text)) return null;
 
         // Lagring av en tilkobling nullstiller lagret vertsnøkkel (første neste tilkobling stoles på på nytt).

@@ -695,6 +695,7 @@ public sealed partial class MainWindow : Window
     async void Ssh_ItemClick(object s, ItemClickEventArgs e)
     {
         var profile = ((SidebarEntry)e.ClickedItem).Profile;
+        Diag.Log($"ssh-klikk '{profile?.Name}' aktiv fane={(Tabs.SelectedItem as TabViewItem)?.Content?.GetType().Name} {Diag.Env()}");
         if (profile != null) await OpenSftpAsync(profile);
     }
 
@@ -913,7 +914,9 @@ public sealed partial class MainWindow : Window
 
         try
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             var fs = await SftpFileSystem.ConnectAsync(p, secret);
+            Diag.Log($"sftp tilkoblet '{p.Name}' {sw.ElapsedMilliseconds}ms");
             ConnectionStore.Save(_profiles);   // lagrer vertsnøkkelen ved første tilkobling
             var et = new ExplorerTab(fs, fs.HomePath);
             var item = AddTab(et, p.Name, "\uE774");
@@ -921,7 +924,13 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            await Dialogs.ErrorAsync(Root.XamlRoot, "Kunne ikke koble til", ex.Message);
+            Diag.Log($"sftp FEIL '{p.Name}' {ex.GetType().Name}: {ex.Message}");
+            var msg = ex.Message.Contains("Channel was closed", StringComparison.OrdinalIgnoreCase)
+                ? "Innloggingen gikk bra, men serveren åpner ikke SFTP. Som regel mangler SFTP-tjenesten på serveren " +
+                  "(for eksempel Dropbear uten sftp-server; på Debian/Raspberry Pi OS: sudo apt install openssh-sftp-server). " +
+                  "Terminal (høyreklikk → Åpne terminal) fungerer uansett.\n\n" + ex.Message
+                : ex.Message;
+            await Dialogs.ErrorAsync(Root.XamlRoot, "Kunne ikke koble til", msg);
         }
     }
 

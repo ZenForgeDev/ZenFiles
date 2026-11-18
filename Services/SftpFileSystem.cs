@@ -18,14 +18,55 @@ public sealed class SftpFileSystem : IFileSystem, IDisposable
         Profile = profile;
     }
 
+    /// <summary>
+    /// Velger innloggingsmetoder. Med nøkkelfil uten oppgitt sti prøves standardnøklene i .ssh (som ssh.exe gjør),
+    /// og lagret passord brukes som reserve hvis de ikke finnes eller ikke fungerer.
+    /// </summary>
+    static List<AuthenticationMethod> BuildAuth(ConnectionProfile p, string? secret)
+    {
+        var list = new List<AuthenticationMethod>();
+        if (!p.UseKey)
+        {
+            list.Add(new PasswordAuthenticationMethod(p.User, secret ?? ""));
+            return list;
+        }
+
+        var keyFiles = new List<string>();
+        if (!string.IsNullOrWhiteSpace(p.KeyPath))
+        {
+            if (!File.Exists(p.KeyPath)) throw new FileNotFoundException("Fant ikke nøkkelfilen: " + p.KeyPath);
+            keyFiles.Add(p.KeyPath);
+        }
+        else
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".ssh");
+            foreach (var n in new[] { "id_ed25519", "id_ecdsa", "id_rsa" })
+                if (File.Exists(Path.Combine(dir, n))) keyFiles.Add(Path.Combine(dir, n));
+        }
+
+        var keys = new List<PrivateKeyFile>();
+        Exception? keyError = null;
+        foreach (var f in keyFiles)
+        {
+            try { keys.Add(string.IsNullOrEmpty(secret) ? new PrivateKeyFile(f) : new PrivateKeyFile(f, secret)); }
+            catch (Exception ex) { keyError = ex; }
+        }
+        if (keys.Count > 0) list.Add(new PrivateKeyAuthenticationMethod(p.User, keys.ToArray()));
+        if (!string.IsNullOrEmpty(secret)) list.Add(new PasswordAuthenticationMethod(p.User, secret));
+
+        if (list.Count == 0)
+            throw new InvalidOperationException(
+                keyError != null
+                    ? "Kunne ikke lese nøkkelfilen (" + keyError.Message + "). Hvis den har passfrase, lagre den i tilkoblingen."
+                    : "Fant ingen nøkkelfil i .ssh og ingen lagret passord. Rediger tilkoblingen og oppgi nøkkelsti eller passord.");
+        return list;
+    }
+
     public static Task<SftpFileSystem> ConnectAsync(ConnectionProfile p, string? secret) => Task.Run(() =>
     {
-        AuthenticationMethod auth = p.UseKey
-            ? new PrivateKeyAuthenticationMethod(p.User,
-                string.IsNullOrEmpty(secret) ? new PrivateKeyFile(p.KeyPath) : new PrivateKeyFile(p.KeyPath, secret))
-            : new PasswordAuthenticationMethod(p.User, secret ?? "");
+        var auth = BuildAuth(p, secret);
 
-        var client = new SftpClient(new ConnectionInfo(p.Host, p.Port, p.User, auth));
+        var client = new SftpClient(new ConnectionInfo(p.Host, p.Port, p.User, auth.ToArray()));
         client.KeepAliveInterval = TimeSpan.FromSeconds(30);
 
         bool mismatch = false;
